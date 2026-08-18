@@ -62,6 +62,19 @@ fn config_overlay_window(window: &tauri::WebviewWindow) {
         if let Ok(hwnd) = window.hwnd() {
             unsafe {
                 let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+
+                // 禁用 DWM 非客户区渲染:去掉透明窗体默认的投影与 NC 边线。
+                // 这是双屏下"透明窗口边缘可见"的根因;参考软件 Keyviz 未处理此项。
+                use windows::Win32::Graphics::Dwm::{
+                    DwmSetWindowAttribute, DWMNCRP_DISABLED, DWMWA_NCRENDERING_POLICY,
+                };
+                let policy = DWMNCRP_DISABLED;
+                let _ = DwmSetWindowAttribute(
+                    hwnd,
+                    DWMWA_NCRENDERING_POLICY,
+                    &policy as *const _ as *const _,
+                    std::mem::size_of_val(&policy) as u32,
+                );
             }
         }
     }
