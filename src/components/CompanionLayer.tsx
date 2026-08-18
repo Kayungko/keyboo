@@ -66,17 +66,19 @@ export function CompanionLayer() {
   const pullY = useMotionValue(0);
   const springX = useSpring(pullX, PULL_SPRING);
   const springY = useSpring(pullY, PULL_SPRING);
-  const rotate = useTransform([springX, springY], (latest: number[]) => {
+  // 形变:按拉拽向量的水平/垂直分量做果冻拉伸,角色朝向不变(不旋转)。
+  // 水平拖 → 横向拉长+纵向压扁;垂直拖 → 纵向拉长+横向压扁。
+  const scaleX = useTransform([springX, springY], (latest: number[]) => {
     const [x, y] = latest;
-    return (Math.atan2(y, x) * 180) / Math.PI;
+    const ax = Math.abs(x);
+    const ay = Math.abs(y);
+    return 1 + Math.min(ax, 180) * 0.0015 - Math.min(ay, 180) * 0.0008;
   });
-  const stretch = useTransform([springX, springY], (latest: number[]) => {
+  const scaleY = useTransform([springX, springY], (latest: number[]) => {
     const [x, y] = latest;
-    return 1 + Math.min(Math.hypot(x, y), 180) * 0.0018;
-  });
-  const squash = useTransform([springX, springY], (latest: number[]) => {
-    const [x, y] = latest;
-    return 1 - Math.min(Math.hypot(x, y), 180) * 0.0011;
+    const ax = Math.abs(x);
+    const ay = Math.abs(y);
+    return 1 + Math.min(ay, 180) * 0.0015 - Math.min(ax, 180) * 0.0008;
   });
 
   const setPos = (p: [number, number] | null) => {
@@ -285,12 +287,10 @@ export function CompanionLayer() {
           </AnimatePresence>
         </div>
 
-        {/* 熊猫汤圆:外层 Q 弹偏移,中层方向旋转,内层形变拉伸/压扁 */}
+        {/* 熊猫汤圆:外层 Q 弹偏移,内层果冻形变(水平/垂直分量,不旋转) */}
         <motion.div animate={controls} style={{ x: springX, y: springY }}>
-          <motion.div style={{ rotate }}>
-            <motion.div style={{ scaleX: stretch, scaleY: squash }}>
-              <BlobSvg />
-            </motion.div>
+          <motion.div style={{ scaleX, scaleY }}>
+            <BlobSvg />
           </motion.div>
         </motion.div>
 
