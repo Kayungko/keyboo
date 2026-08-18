@@ -69,6 +69,15 @@ export const CompanionSettings = () => {
         </Item>
         <Item variant="muted">
           <ItemContent>
+            <ItemTitle>Q 弹物理</ItemTitle>
+            <ItemDescription>左键按住拖动时果冻拉伸,松手回弹</ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <Switch checked={config.physics} onChange={(physics) => setConfig({ physics })} />
+          </ItemActions>
+        </Item>
+        <Item variant="muted">
+          <ItemContent>
             <ItemTitle>位置</ItemTitle>
             <ItemDescription>在桌面上直接拖拽伙伴即可移动</ItemDescription>
           </ItemContent>

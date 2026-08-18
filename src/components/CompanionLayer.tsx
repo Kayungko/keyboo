@@ -1,13 +1,25 @@
-// 打字伙伴覆盖层:黑白小团子 + 等级称号 + 敲键冒 +1 + 点击气泡统计 + 拖拽
+// 打字伙伴覆盖层:黑白熊猫汤圆 + 等级称号 + 敲键冒 +1 + 点击气泡统计
+// 交互:
+//   - 左键点击(<4px):切换统计气泡
+//   - 左键按住拖动:Q 弹拉拽(果冻拉伸 + 松手 overshoot 回弹,physics 开关控制)
+//   - 右键按住拖动:移动位置(持久化)
 //
-// 交互前提:覆盖层默认全屏点击穿透(set_ignore_cursor_events(true)),
-// 鼠标悬停伙伴时前端调用 set_cursor_passthrough(false) 局部恢复点击;
-// 拖拽进行中强制保持恢复(光标可能移出伙伴矩形),释放后按光标位置重新判定。
-// 拖拽中高频位置只存本地 state,释放时才写 store(持久化 + 双窗口同步)。
+// Q 弹物理用 motion 的 spring 引擎(胡克定律+阻尼):useSpring 追踪拉拽偏移,
+// 跟手有延迟、松手自然回弹;形变用 useTransform 沿拉拽方向拉伸/垂直压扁。
+//
+// 点击穿透:覆盖层默认全屏点击穿透,悬停伙伴时 set_cursor_passthrough(false)
+// 局部恢复点击;拖拽/拉拽中强制保持恢复,释放后按光标位置重新判定。
 
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
-import { AnimatePresence, motion, useAnimationControls } from "motion/react";
+import {
+  AnimatePresence,
+  motion,
+  useAnimationControls,
+  useMotionValue,
+  useSpring,
+  useTransform,
+} from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useEventStore } from "@/stores/useEventStore";
 import { levelOf, titleOf, useCompanionStore } from "@/stores/useCompanionStore";
@@ -16,7 +28,10 @@ interface FloatOne {
   id: number;
 }
 
+type DragMode = "move" | "pull";
+
 interface DragState {
+  mode: DragMode;
   startX: number;
   startY: number;
   originLeft: number;
@@ -25,6 +40,8 @@ interface DragState {
 }
 
 const DRAG_THRESHOLD = 4;
+// Q 弹物理参数:欠阻尼 → 松手有 overshoot 果冻感
+const PULL_SPRING = { stiffness: 320, damping: 14, mass: 0.7 };
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
@@ -44,6 +61,24 @@ export function CompanionLayer() {
   const controls = useAnimationControls();
   const mountedRef = useRef(false);
 
+  // Q 弹拉拽:即时偏移(motionValue)+ spring 平滑 + 形变派生
+  const pullX = useMotionValue(0);
+  const pullY = useMotionValue(0);
+  const springX = useSpring(pullX, PULL_SPRING);
+  const springY = useSpring(pullY, PULL_SPRING);
+  const rotate = useTransform([springX, springY], (latest: number[]) => {
+    const [x, y] = latest;
+    return (Math.atan2(y, x) * 180) / Math.PI;
+  });
+  const stretch = useTransform([springX, springY], (latest: number[]) => {
+    const [x, y] = latest;
+    return 1 + Math.min(Math.hypot(x, y), 180) * 0.0018;
+  });
+  const squash = useTransform([springX, springY], (latest: number[]) => {
+    const [x, y] = latest;
+    return 1 - Math.min(Math.hypot(x, y), 180) * 0.0011;
+  });
+
   const setPos = (p: [number, number] | null) => {
     localPosRef.current = p;
     setLocalPos(p);
@@ -51,7 +86,7 @@ export function CompanionLayer() {
 
   const pos = dragging && localPos ? localPos : config.pos;
 
-  // 点击穿透翻转 + 拖拽跟随:覆盖层实时收到鼠标坐标(钩子事件不受穿透影响)
+  // 点击穿透翻转 + 拖拽/拉拽跟随
   useEffect(() => {
     if (!config.enabled) {
       void invoke("set_cursor_passthrough", { ignore: true });
@@ -70,7 +105,6 @@ export function CompanionLayer() {
       const x = state.mouse.x / dpr;
       const y = state.mouse.y / dpr;
 
-      // 拖拽中:跟随光标,且强制保持可点击(不恢复穿透)
       const drag = dragRef.current;
       if (drag) {
         const dx = x - drag.startX;
@@ -80,12 +114,19 @@ export function CompanionLayer() {
           drag.moved = true;
           setDragging(true);
         }
-        const el = rootRef.current;
-        setPos([
-          clamp(drag.originLeft + dx, 0, window.innerWidth - (el?.offsetWidth ?? 0)),
-          clamp(drag.originTop + dy, 0, window.innerHeight - (el?.offsetHeight ?? 0)),
-        ]);
         setIgnore(false);
+        if (drag.mode === "move") {
+          // 右键移动:直接跟随光标
+          const el = rootRef.current;
+          setPos([
+            clamp(drag.originLeft + dx, 0, window.innerWidth - (el?.offsetWidth ?? 0)),
+            clamp(drag.originTop + dy, 0, window.innerHeight - (el?.offsetHeight ?? 0)),
+          ]);
+        } else {
+          // 左键拉拽:更新 spring 目标,产生跟手延迟 + 回弹
+          pullX.set(dx);
+          pullY.set(dy);
+        }
         return;
       }
 
@@ -96,26 +137,34 @@ export function CompanionLayer() {
       setIgnore(!(x >= r.left && x <= r.right && y >= r.top && y <= r.bottom));
     });
 
-    // 释放:拖拽过则提交位置(持久化+同步),否则视为点击弹气泡
     const onMouseUp = () => {
       const drag = dragRef.current;
       if (!drag) return;
       dragRef.current = null;
       setDragging(false);
-      if (drag.moved) {
-        const p = localPosRef.current;
-        setPos(null);
-        if (p) useCompanionStore.getState().setConfig({ pos: p });
+      if (drag.mode === "move") {
+        if (drag.moved) {
+          const p = localPosRef.current;
+          setPos(null);
+          if (p) useCompanionStore.getState().setConfig({ pos: p });
+        }
       } else {
-        setBubbleOpen((o) => !o);
+        // 拉拽松手:回弹到原位
+        pullX.set(0);
+        pullY.set(0);
+        if (!drag.moved) {
+          // 未移动 = 点击,切换气泡
+          setBubbleOpen((o) => !o);
+        }
       }
     };
 
-    // 失焦兜底:mouseup 可能丢失(如 Alt+Tab),放弃本次拖拽
     const onBlur = () => {
       dragRef.current = null;
       setDragging(false);
       setPos(null);
+      pullX.set(0);
+      pullY.set(0);
       setIgnore(true);
     };
 
@@ -127,7 +176,7 @@ export function CompanionLayer() {
       window.removeEventListener("blur", onBlur);
       void invoke("set_cursor_passthrough", { ignore: true });
     };
-  }, [config.enabled]);
+  }, [config.enabled, pullX, pullY]);
 
   // 敲键:压缩弹跳 + 冒 +1(首帧跳过;池上限 5 防堆积)
   useEffect(() => {
@@ -174,13 +223,18 @@ export function CompanionLayer() {
   const level = levelOf(stats.totalChars);
 
   const onMouseDown = (e: React.MouseEvent) => {
-    if (e.button !== 0) return;
+    if (e.button !== 0 && e.button !== 2) return;
+    e.preventDefault();
     const el = rootRef.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
     const m = useEventStore.getState().mouse;
     const dpr = window.devicePixelRatio || 1;
+    // 右键 = 移动位置;左键 = Q 弹拉拽(物理关闭时左键也退化为移动)
+    const physics = useCompanionStore.getState().config.physics;
+    const mode: DragMode = e.button === 2 || !physics ? "move" : "pull";
     dragRef.current = {
+      mode,
       startX: m.x / dpr,
       startY: m.y / dpr,
       originLeft: r.left,
@@ -193,6 +247,7 @@ export function CompanionLayer() {
     <div
       ref={rootRef}
       onMouseDown={onMouseDown}
+      onContextMenu={(e) => e.preventDefault()}
       className={cn(
         "absolute flex flex-col items-center select-none",
         !pos && "bottom-8 right-8",
@@ -230,9 +285,13 @@ export function CompanionLayer() {
           </AnimatePresence>
         </div>
 
-        {/* 黑白小团子 */}
-        <motion.div animate={controls}>
-          <BlobSvg />
+        {/* 熊猫汤圆:外层 Q 弹偏移,中层方向旋转,内层形变拉伸/压扁 */}
+        <motion.div animate={controls} style={{ x: springX, y: springY }}>
+          <motion.div style={{ rotate }}>
+            <motion.div style={{ scaleX: stretch, scaleY: squash }}>
+              <BlobSvg />
+            </motion.div>
+          </motion.div>
         </motion.div>
 
         {/* 点击气泡:统计 */}

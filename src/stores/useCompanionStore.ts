@@ -28,6 +28,8 @@ export interface CompanionConfig {
   showLevel: boolean;
   /** 拖拽后的位置(CSS 像素,容器左上角相对窗口);null = 默认右下角 */
   pos: [number, number] | null;
+  /** Q 弹物理:左键按住拖动时果冻拉伸+松手回弹 */
+  physics: boolean;
 }
 
 export interface CompanionStats {
@@ -49,7 +51,7 @@ const todayStr = () => {
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 };
 
-const defaultConfig = (): CompanionConfig => ({ enabled: true, skin: "blob", size: 96, showLevel: true, pos: null });
+const defaultConfig = (): CompanionConfig => ({ enabled: true, skin: "blob", size: 96, showLevel: true, pos: null, physics: true });
 const defaultStats = (): CompanionStats => ({
   totalKeys: 0,
   totalChars: 0,
