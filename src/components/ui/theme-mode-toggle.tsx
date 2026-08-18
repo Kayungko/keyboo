@@ -1,10 +1,19 @@
 // 主题切换(浅色 / 深色 / 跟随系统)
 
 import { useEffect, useState } from "react";
+import { load } from "@tauri-apps/plugin-store";
 
 type ThemeMode = "light" | "dark" | "system";
 
 export const THEME_KEY = "keyboo-theme";
+const STORE_THEME_KEY = "theme";
+
+const isThemeMode = (v: unknown): v is ThemeMode => v === "light" || v === "dark" || v === "system";
+
+// 持久化:localStorage 做首帧同步缓存(首帧前读取避免深色闪白),
+// plugin-store 做可靠落盘(与其余设置统一,避免 WebView 存储被清导致主题丢失)。
+let themeStorePromise: ReturnType<typeof load> | null = null;
+const getThemeStore = () => (themeStorePromise ??= load("keyboo.json", { autoSave: false, defaults: {} }));
 
 export function applyTheme(mode: ThemeMode) {
   const dark = mode === "dark" || (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -14,7 +23,29 @@ export function applyTheme(mode: ThemeMode) {
 /** 在首帧渲染前调用,避免深色模式先闪一帧浅色 */
 export function applyInitialTheme() {
   const stored = localStorage.getItem(THEME_KEY);
-  applyTheme(stored === "light" || stored === "dark" ? stored : "system");
+  applyTheme(isThemeMode(stored) ? stored : "system");
+}
+
+/** 写入主题:同步缓存 + 可靠落盘 */
+export async function persistTheme(mode: ThemeMode) {
+  localStorage.setItem(THEME_KEY, mode);
+  const store = await getThemeStore();
+  await store.set(STORE_THEME_KEY, mode);
+  await store.save();
+}
+
+/** 从 plugin-store 恢复主题(覆盖可能丢失的 localStorage 缓存) */
+export async function restoreTheme() {
+  try {
+    const store = await getThemeStore();
+    const stored = await store.get<string>(STORE_THEME_KEY);
+    if (isThemeMode(stored)) {
+      localStorage.setItem(THEME_KEY, stored);
+      applyTheme(stored);
+    }
+  } catch {
+    // 首次启动无条目或读取失败:保持 localStorage 缓存值即可
+  }
 }
 
 export function useThemeMode() {
@@ -24,7 +55,7 @@ export function useThemeMode() {
 
   useEffect(() => {
     applyTheme(mode);
-    localStorage.setItem(THEME_KEY, mode);
+    void persistTheme(mode);
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     const listener = () => mode === "system" && applyTheme("system");
     media.addEventListener("change", listener);
