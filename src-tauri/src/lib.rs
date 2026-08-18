@@ -47,6 +47,26 @@ fn set_main_window_monitor(app: tauri::AppHandle, monitor_name: Option<String>) 
     Ok(())
 }
 
+/// 覆盖层窗口配置:点击穿透 + 置顶。
+/// set_ignore_cursor_events 让窗口对鼠标完全透明(WS_EX_TRANSPARENT),
+/// 否则全屏覆盖层会拦截左键点击、右键还会弹出 WebView 默认菜单。
+fn config_overlay_window(window: &tauri::WebviewWindow) {
+    window
+        .set_ignore_cursor_events(true)
+        .expect("Failed to set ignore cursor events");
+
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE};
+
+        if let Ok(hwnd) = window.hwnd() {
+            unsafe {
+                let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+            }
+        }
+    }
+}
+
 /// 设置显隐快捷键:更新内存状态并持久化到 store
 #[tauri::command]
 fn set_toggle_shortcut(app: tauri::AppHandle, shortcut: Vec<String>) -> Result<(), String> {
@@ -78,6 +98,7 @@ fn set_toggle_shortcut(app: tauri::AppHandle, shortcut: Vec<String>) -> Result<(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|_, __, ___| {}))
+        .plugin(tauri_plugin_prevent_default::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -137,6 +158,8 @@ pub fn run() {
 
             // 显示覆盖层主窗口(默认铺满主显示器)
             if let Some(window) = app.get_webview_window("main") {
+                // 点击穿透 + 置顶:必须先于 show 配置
+                config_overlay_window(&window);
                 if let Ok(monitors) = tauri::WebviewWindow::available_monitors(&window) {
                     if let Some(monitor) = monitors.first() {
                         let _ = window.set_position(*monitor.position());
