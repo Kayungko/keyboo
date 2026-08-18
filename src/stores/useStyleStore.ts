@@ -168,7 +168,7 @@ export const useStyleStore = create<StyleStore>()(
       mouse: {
         showClicks: true,
         size: 120,
-        color: "#ffffff",
+        color: "#1a1a1a",
         keepHighlight: false,
         showIndicator: true,
         keepIndicator: true,
@@ -252,17 +252,19 @@ export const useStyleStore = create<StyleStore>()(
     {
       name: STYLE_STORE_NAME,
       storage: keybooStorage,
-      // v1:整体黑白化——存量(0.2.x 珊瑚色)配置迁移到黑白简约主题
-      version: 1,
+      // v1:整体黑白化(键帽/文字/修饰键);v2:鼠标圆环白色→黑色(浅色桌面可见)
+      version: 2,
       migrate: (persisted, version) => {
         const state = persisted as Partial<StyleState>;
-        if (version === 0) {
+        if (version < 1) {
           state.color = { color: "#f8f8f8", secondaryColor: "#dcdcdc", useGradient: false };
           if (state.text) state.text = { ...state.text, color: "#000000" };
-          if (state.mouse) state.mouse = { ...state.mouse, color: "#ffffff" };
           if (state.modifier) {
             state.modifier = { ...state.modifier, color: "#e5e5e5", borderColor: "#e5e5e5" };
           }
+        }
+        if (version < 2) {
+          if (state.mouse) state.mouse = { ...state.mouse, color: "#1a1a1a" };
         }
         return state as StyleState;
       },

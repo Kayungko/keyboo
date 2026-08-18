@@ -121,6 +121,8 @@ export function MouseOverlay() {
                 borderStyle: pressedButton === "Right" ? "dashed" : "solid",
                 borderWidth: style.size / 22,
                 borderRadius: "50%",
+                // 外圈白色光晕:深色桌面上也能看见,浅色桌面靠深色主体辨识
+                boxShadow: "0 0 0 2px rgba(255,255,255,0.85)",
               }}
               transition={
                 show
@@ -142,6 +144,7 @@ export function MouseOverlay() {
                     borderColor: style.color,
                     borderStyle: ripple.button === "Right" ? "dashed" : "solid",
                     borderRadius: "50%",
+                    boxShadow: "0 0 0 2px rgba(255,255,255,0.85)",
                   }}
                 />
               ))}

@@ -1,8 +1,6 @@
 import { useEventStore } from "@/stores/useEventStore";
 import { useStyleStore } from "@/stores/useStyleStore";
-import { easeOutQuint } from "@/lib/utils";
-import { colord } from "colord";
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 
 // 鼠标按键状态指示器(鼠标造型图标,按键/滚轮高亮)
 
@@ -47,8 +45,9 @@ export const MouseIndicator = () => {
   else if (wheel > 0) icon = "scrollUp";
   else if (wheel < 0) icon = "scrollDown";
 
-  // 强调色由鼠标主题色派生,与整体配色统一
-  const accent = colord(style.color).lighten(0.25).toHex();
+  // 黑白主题:高亮用白色实心填充(黑底上从空心白描边 → 实心白块,即时清晰)。
+  // 不再从主题色派生(彩色时代是蓝,黑白化后 lighten 出深灰,黑底上几乎看不见)。
+  const accent = "#ffffff";
 
   const renderIcon = () => {
     switch (icon) {
@@ -76,22 +75,17 @@ export const MouseIndicator = () => {
         padding: style.indicatorSize * 0.2,
       }}
     >
-      {/* 图标状态切换:退出下移淡出、进入自上落位 */}
-      <AnimatePresence mode="wait" initial={false}>
-        <motion.div
-          key={icon}
-          className="w-full h-full"
-          initial={{ opacity: 0, y: -4 }}
-          animate={{ opacity: 1, y: scrollNudge }}
-          exit={{ opacity: 0, y: 4 }}
-          transition={{
-            opacity: { duration: 0.12, ease: easeOutQuint },
-            y: { type: "spring", stiffness: 600, damping: 28 },
-          }}
-        >
-          {renderIcon()}
-        </motion.div>
-      </AnimatePresence>
+      {/* 图标即时切换:按键高亮必须即时生效,不能用 AnimatePresence mode="wait"——
+          它要求旧图标 exit 动画播完才进场,快速点击(按下→释放 <100ms)时
+          高亮图标还没进场就被释放状态打断,导致"时有时无"。仅保留滚轮位移动画。 */}
+      <motion.div
+        className="w-full h-full"
+        initial={false}
+        animate={{ y: scrollNudge }}
+        transition={{ y: { type: "spring", stiffness: 600, damping: 28 } }}
+      >
+        {renderIcon()}
+      </motion.div>
     </div>
   );
 };
