@@ -190,6 +190,23 @@ export const MouseSettings = () => {
         </ItemActions>
       </Item>
 
+      <Item variant="muted" className={mouse.showTrail ? "" : "pointer-events-none opacity-50"}>
+        <ItemContent>
+          <ItemTitle>
+            <HugeiconsIcon icon={PaintBoardIcon} size="1em" /> 颜色
+          </ItemTitle>
+          <ItemDescription>拖尾的颜色与透明度</ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <ColorField
+            className="w-56"
+            value={mouse.trailColor}
+            onChange={(trailColor) => setMouseStyle({ trailColor })}
+            disabled={!mouse.showTrail}
+          />
+        </ItemActions>
+      </Item>
+
       <ItemGrid>
         <Item variant="muted" className={mouse.showTrail ? "" : "pointer-events-none opacity-50"}>
           <ItemContent>

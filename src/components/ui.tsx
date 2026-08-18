@@ -237,32 +237,64 @@ export function SelectField<T extends string>({ options, value, onChange, width 
 
 // ─── 颜色选择 ───
 
+// 解析 #rgb / #rrggbb / #rrggbbaa,返回纯 RGB(6 位小写)与 alpha(0~1)
+function parseHex(value: string): { rgb: string; alpha: number } {
+  const m = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.exec(value.trim());
+  if (!m) return { rgb: "#ffffff", alpha: 1 };
+  const hex = m[1];
+  if (hex.length === 3) {
+    return { rgb: `#${hex[0]}${hex[0]}${hex[1]}${hex[1]}${hex[2]}${hex[2]}`.toLowerCase(), alpha: 1 };
+  }
+  if (hex.length === 6) return { rgb: `#${hex.toLowerCase()}`, alpha: 1 };
+  return { rgb: `#${hex.slice(0, 6).toLowerCase()}`, alpha: parseInt(hex.slice(6, 8), 16) / 255 };
+}
+
+function alphaToHex(alpha: number): string {
+  const a = Math.round(Math.min(1, Math.max(0, alpha)) * 255);
+  return a.toString(16).padStart(2, "0");
+}
+
 export function ColorField({ value, onChange, disabled, className }: {
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
   className?: string;
 }) {
-  // 8 位 hex(含 alpha)时取前 7 位给原生 color input
-  const solidValue = /^#[0-9a-fA-F]{6}$/.test(value) ? value : value.slice(0, 7);
+  const { rgb, alpha } = parseHex(value);
+  const setRgb = (nextRgb: string) => onChange(alpha >= 1 ? nextRgb : `${nextRgb}${alphaToHex(alpha)}`);
+  const setAlpha = (nextAlpha: number) => onChange(nextAlpha >= 1 ? rgb : `${rgb}${alphaToHex(nextAlpha)}`);
+
   return (
     <div className={cn(
-      "flex h-8 items-center gap-2 rounded-lg border border-input bg-background px-2",
+      "flex h-8 items-center gap-1.5 rounded-lg border border-input bg-background px-2",
       disabled && "opacity-40 pointer-events-none",
       className,
     )}>
       <input
         type="color"
-        className="h-5 w-5 cursor-pointer rounded border-none bg-transparent p-0"
-        value={/^#[0-9a-fA-F]{6}$/.test(solidValue) ? solidValue : "#ffffff"}
-        onChange={(e) => onChange(e.target.value)}
+        className="h-5 w-5 shrink-0 cursor-pointer rounded border-none bg-transparent p-0"
+        value={rgb}
+        onChange={(e) => setRgb(e.target.value)}
       />
       <input
-        className="w-16 bg-transparent text-xs text-muted-foreground outline-none"
+        className="w-16 shrink-0 bg-transparent text-xs text-muted-foreground outline-none"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         spellCheck={false}
       />
+      {/* 透明度滑块:0~100% */}
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={1}
+        value={Math.round(alpha * 100)}
+        onChange={(e) => setAlpha(Number(e.target.value) / 100)}
+        className="h-1 w-14 shrink-0 cursor-pointer appearance-none rounded-full bg-secondary accent-foreground"
+      />
+      <span className="w-8 shrink-0 text-right font-mono text-[10px] text-muted-foreground">
+        {Math.round(alpha * 100)}%
+      </span>
     </div>
   );
 }

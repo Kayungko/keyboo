@@ -85,6 +85,7 @@ export interface MouseSettings {
   indicatorOffsetX: number;
   indicatorOffsetY: number;
   showTrail: boolean;
+  trailColor: string;
   trailWidth: number;
   trailFadeMs: number;
 }
@@ -176,6 +177,7 @@ export const useStyleStore = create<StyleStore>()(
         indicatorOffsetX: 28,
         indicatorOffsetY: 28,
         showTrail: false,
+        trailColor: "#1a1a1a",
         trailWidth: 6,
         trailFadeMs: 600,
       },
@@ -252,8 +254,8 @@ export const useStyleStore = create<StyleStore>()(
     {
       name: STYLE_STORE_NAME,
       storage: keybooStorage,
-      // v1:整体黑白化(键帽/文字/修饰键);v2:鼠标圆环白色→黑色(浅色桌面可见)
-      version: 2,
+      // v1:整体黑白化(键帽/文字/修饰键);v2:鼠标圆环白色→黑色;v3:拖尾独立颜色
+      version: 3,
       migrate: (persisted, version) => {
         const state = persisted as Partial<StyleState>;
         if (version < 1) {
@@ -265,6 +267,11 @@ export const useStyleStore = create<StyleStore>()(
         }
         if (version < 2) {
           if (state.mouse) state.mouse = { ...state.mouse, color: "#1a1a1a" };
+        }
+        if (version < 3) {
+          if (state.mouse && state.mouse.trailColor === undefined) {
+            state.mouse = { ...state.mouse, trailColor: state.mouse.color ?? "#1a1a1a" };
+          }
         }
         return state as StyleState;
       },

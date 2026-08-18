@@ -14,7 +14,7 @@ interface TrailPoint {
 
 export const MouseTrail = () => {
   const showTrail = useStyleStore((state) => state.mouse.showTrail);
-  const trailColor = useStyleStore((state) => state.mouse.color);
+  const trailColor = useStyleStore((state) => state.mouse.trailColor);
   const trailWidth = useStyleStore((state) => state.mouse.trailWidth);
   const trailFadeMs = useStyleStore((state) => state.mouse.trailFadeMs);
 
