@@ -28,7 +28,7 @@ export default function Settings() {
   }, []);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-background">
+    <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
       {/* 侧边栏 */}
       <div className="flex w-40 flex-col gap-1 border-r border-border p-3">
         <div className="mb-3 flex items-center gap-2 px-1">

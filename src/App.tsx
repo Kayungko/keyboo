@@ -11,7 +11,13 @@ function route() {
 function App() {
   if (route() === "settings") {
     return (
-      <Suspense fallback={<div className="p-8 text-sm text-gray-400">加载中…</div>}>
+      <Suspense
+        fallback={
+          <div className="flex h-screen items-center justify-center bg-background text-sm text-muted-foreground">
+            加载中…
+          </div>
+        }
+      >
         <Settings />
       </Suspense>
     );
