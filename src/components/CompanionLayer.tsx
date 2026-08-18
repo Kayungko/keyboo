@@ -1,7 +1,7 @@
 // 打字伙伴覆盖层:黑白熊猫汤圆 + 等级称号 + 敲键冒 +1 + 点击气泡统计
 // 交互:
 //   - 左键点击(<4px):切换统计气泡
-//   - 左键按住拖动:Q 弹拉拽(果冻拉伸 + 松手 overshoot 回弹,physics 开关控制)
+//   - 左键按住拖动:软体 Q 弹拉拽(按住的那一块局部拉伸,松手 overshoot 回弹,physics 开关控制)
 //   - 右键按住拖动:移动位置(持久化)
 //
 // 关键架构:覆盖层窗口**始终**全屏点击穿透(set_ignore_cursor_events(true)),
@@ -9,21 +9,15 @@
 // 窗口边框重绘、出现"非全屏范围框")。而是监听全局钩子经 Rust 转发来的
 // 鼠标坐标 + 按键状态,在前端自行判定点击/拖拽/拉拽。
 //
-// Q 弹物理用 motion 的 spring 引擎:useSpring 追踪拉拽偏移,跟手有延迟、
-// 松手回弹;形变用 useTransform 沿拉拽方向拉伸/垂直压扁。
+// 软体 Q 弹:拖动时切到 SoftBody(Canvas 网格纹理映射),对拖拽点附近顶点
+// 施加高斯衰减位移,只让按住的那一块局部拉伸;松手 spring 回弹后切回 SVG。
 
 import { cn } from "@/lib/utils";
-import {
-  AnimatePresence,
-  motion,
-  useAnimationControls,
-  useMotionValue,
-  useSpring,
-  useTransform,
-} from "motion/react";
+import { AnimatePresence, motion, useAnimationControls } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useEventStore } from "@/stores/useEventStore";
 import { levelOf, titleOf, useCompanionStore } from "@/stores/useCompanionStore";
+import { SoftBody, type PullInfo } from "./SoftBody";
 
 interface FloatOne {
   id: number;
@@ -37,12 +31,14 @@ interface DragState {
   startY: number;
   originLeft: number;
   originTop: number;
+  localX: number;
+  localY: number;
   moved: boolean;
 }
 
 const DRAG_THRESHOLD = 4;
-// Q 弹物理参数:欠阻尼 → 松手有 overshoot 果冻感
-const PULL_SPRING = { stiffness: 320, damping: 14, mass: 0.7 };
+// 松手后软体回弹稳定再切回 SVG 的延迟
+const SETTLE_MS = 500;
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
@@ -56,30 +52,14 @@ export function CompanionLayer() {
   const [floats, setFloats] = useState<FloatOne[]>([]);
   const [dragging, setDragging] = useState(false);
   const [localPos, setLocalPos] = useState<[number, number] | null>(null);
+  const [pull, setPull] = useState<PullInfo | null>(null);
+  const [warping, setWarping] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
   const localPosRef = useRef<[number, number] | null>(null);
+  const settleTimerRef = useRef<number | null>(null);
   const controls = useAnimationControls();
   const mountedRef = useRef(false);
-
-  // Q 弹拉拽:即时偏移(motionValue)+ spring 平滑 + 形变派生
-  const pullX = useMotionValue(0);
-  const pullY = useMotionValue(0);
-  const springX = useSpring(pullX, PULL_SPRING);
-  const springY = useSpring(pullY, PULL_SPRING);
-  // 形变:按拉拽向量的水平/垂直分量做果冻拉伸,角色朝向不变(不旋转)。
-  const scaleX = useTransform([springX, springY], (latest: number[]) => {
-    const [x, y] = latest;
-    const ax = Math.abs(x);
-    const ay = Math.abs(y);
-    return 1 + Math.min(ax, 180) * 0.0015 - Math.min(ay, 180) * 0.0008;
-  });
-  const scaleY = useTransform([springX, springY], (latest: number[]) => {
-    const [x, y] = latest;
-    const ax = Math.abs(x);
-    const ay = Math.abs(y);
-    return 1 + Math.min(ay, 180) * 0.0015 - Math.min(ax, 180) * 0.0008;
-  });
 
   const setPos = (p: [number, number] | null) => {
     localPosRef.current = p;
@@ -89,7 +69,6 @@ export function CompanionLayer() {
   const pos = dragging && localPos ? localPos : config.pos;
 
   // 伙伴交互:监听全局钩子转发的鼠标坐标 + 按键状态,自行判定。
-  // 不依赖窗口接收鼠标事件(窗口始终穿透,避免远程桌面下范围框)。
   useEffect(() => {
     const beginDrag = (button: string) => {
       const el = rootRef.current;
@@ -99,11 +78,21 @@ export function CompanionLayer() {
       const x = m.x / dpr;
       const y = m.y / dpr;
       const r = el.getBoundingClientRect();
-      // 仅当按下发生在伙伴矩形内才进入交互
       if (x < r.left || x > r.right || y < r.top || y > r.bottom) return;
       const physics = useCompanionStore.getState().config.physics;
       const mode: DragMode = button === "Right" || !physics ? "move" : "pull";
-      dragRef.current = { mode, startX: x, startY: y, originLeft: r.left, originTop: r.top, moved: false };
+      const localX = r.width > 0 ? (x - r.left) / r.width : 0.5;
+      const localY = r.height > 0 ? (y - r.top) / r.height : 0.5;
+      dragRef.current = {
+        mode,
+        startX: x,
+        startY: y,
+        originLeft: r.left,
+        originTop: r.top,
+        localX,
+        localY,
+        moved: false,
+      };
     };
 
     const endDrag = () => {
@@ -118,8 +107,10 @@ export function CompanionLayer() {
           if (p) useCompanionStore.getState().setConfig({ pos: p });
         }
       } else {
-        pullX.set(0);
-        pullY.set(0);
+        // 软体拉拽松手:回弹,稳定后切回 SVG
+        setPull(null);
+        if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
+        settleTimerRef.current = window.setTimeout(() => setWarping(false), SETTLE_MS);
         if (!drag.moved) setBubbleOpen((o) => !o);
       }
     };
@@ -127,7 +118,7 @@ export function CompanionLayer() {
     const unsubscribe = useEventStore.subscribe((state, prev) => {
       const dpr = window.devicePixelRatio || 1;
 
-      // 1. 检测按下 / 松开(来自 Rust 全局钩子 MouseButtonEvent)
+      // 1. 检测按下 / 松开
       const pressedNow = state.pressedMouseButtons.filter((b) => !prev.pressedMouseButtons.includes(b));
       const releasedNow = prev.pressedMouseButtons.filter((b) => !state.pressedMouseButtons.includes(b));
       if (pressedNow.length > 0 && !dragRef.current) {
@@ -137,7 +128,7 @@ export function CompanionLayer() {
         endDrag();
       }
 
-      // 2. 拖拽/拉拽跟随(鼠标坐标变化)
+      // 2. 拖拽/拉拽跟随
       if (state.mouse.x === prev.mouse.x && state.mouse.y === prev.mouse.y) return;
       const drag = dragRef.current;
       if (!drag) return;
@@ -149,6 +140,10 @@ export function CompanionLayer() {
       if (!drag.moved) {
         drag.moved = true;
         setDragging(true);
+        if (drag.mode === "pull") {
+          setWarping(true);
+          if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
+        }
       }
       if (drag.mode === "move") {
         const el = rootRef.current;
@@ -157,25 +152,25 @@ export function CompanionLayer() {
           clamp(drag.originTop + dy, 0, window.innerHeight - (el?.offsetHeight ?? 0)),
         ]);
       } else {
-        pullX.set(dx);
-        pullY.set(dy);
+        setPull({ localX: drag.localX, localY: drag.localY, offsetX: dx, offsetY: dy });
       }
     });
 
-    // 失焦兜底:mouseup 可能丢失(如 Alt+Tab),放弃本次交互
     const onBlur = () => {
       dragRef.current = null;
       setDragging(false);
       setPos(null);
-      pullX.set(0);
-      pullY.set(0);
+      setPull(null);
+      setWarping(false);
+      if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
     };
     window.addEventListener("blur", onBlur);
     return () => {
       unsubscribe();
       window.removeEventListener("blur", onBlur);
+      if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
     };
-  }, [pullX, pullY]);
+  }, []);
 
   // 敲键:压缩弹跳 + 冒 +1(首帧跳过;池上限 5 防堆积)
   useEffect(() => {
@@ -261,11 +256,17 @@ export function CompanionLayer() {
           </AnimatePresence>
         </div>
 
-        {/* 熊猫汤圆:外层 Q 弹偏移,内层果冻形变(水平/垂直分量,不旋转) */}
-        <motion.div animate={controls} style={{ x: springX, y: springY }}>
-          <motion.div style={{ scaleX, scaleY }}>
+        {/* 熊猫汤圆:阴影在容器(两套渲染共用),静止用 SVG(带眨眼),
+            拖拽/回弹用 SoftBody 网格变形 */}
+        <motion.div
+          animate={controls}
+          className="relative w-full"
+          style={{ filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.4))" }}
+        >
+          <div style={{ opacity: warping ? 0 : 1, transition: "opacity 0.08s" }}>
             <BlobSvg />
-          </motion.div>
+          </div>
+          <SoftBody size={config.size} pull={pull} visible={warping} />
         </motion.div>
 
         {/* 点击气泡:统计 */}
@@ -313,7 +314,6 @@ function BlobSvg() {
     <svg
       viewBox="0 0 1024 1024"
       className="block w-full"
-      style={{ filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.4))" }}
       role="img"
       aria-label="键啵"
     >
