@@ -4,13 +4,14 @@
 //   - 左键按住拖动:Q 弹拉拽(果冻拉伸 + 松手 overshoot 回弹,physics 开关控制)
 //   - 右键按住拖动:移动位置(持久化)
 //
-// Q 弹物理用 motion 的 spring 引擎(胡克定律+阻尼):useSpring 追踪拉拽偏移,
-// 跟手有延迟、松手自然回弹;形变用 useTransform 沿拉拽方向拉伸/垂直压扁。
+// 关键架构:覆盖层窗口**始终**全屏点击穿透(set_ignore_cursor_events(true)),
+// 伙伴交互不依赖窗口接收鼠标事件(那需要临时关闭穿透,远程桌面下会触发
+// 窗口边框重绘、出现"非全屏范围框")。而是监听全局钩子经 Rust 转发来的
+// 鼠标坐标 + 按键状态,在前端自行判定点击/拖拽/拉拽。
 //
-// 点击穿透:覆盖层默认全屏点击穿透,悬停伙伴时 set_cursor_passthrough(false)
-// 局部恢复点击;拖拽/拉拽中强制保持恢复,释放后按光标位置重新判定。
+// Q 弹物理用 motion 的 spring 引擎:useSpring 追踪拉拽偏移,跟手有延迟、
+// 松手回弹;形变用 useTransform 沿拉拽方向拉伸/垂直压扁。
 
-import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
 import {
   AnimatePresence,
@@ -67,7 +68,6 @@ export function CompanionLayer() {
   const springX = useSpring(pullX, PULL_SPRING);
   const springY = useSpring(pullY, PULL_SPRING);
   // 形变:按拉拽向量的水平/垂直分量做果冻拉伸,角色朝向不变(不旋转)。
-  // 水平拖 → 横向拉长+纵向压扁;垂直拖 → 纵向拉长+横向压扁。
   const scaleX = useTransform([springX, springY], (latest: number[]) => {
     const [x, y] = latest;
     const ax = Math.abs(x);
@@ -88,58 +88,25 @@ export function CompanionLayer() {
 
   const pos = dragging && localPos ? localPos : config.pos;
 
-  // 点击穿透翻转 + 拖拽/拉拽跟随
+  // 伙伴交互:监听全局钩子转发的鼠标坐标 + 按键状态,自行判定。
+  // 不依赖窗口接收鼠标事件(窗口始终穿透,避免远程桌面下范围框)。
   useEffect(() => {
-    if (!config.enabled) {
-      void invoke("set_cursor_passthrough", { ignore: true });
-      return;
-    }
-    let ignored = true;
-    const setIgnore = (value: boolean) => {
-      if (value === ignored) return;
-      ignored = value;
-      void invoke("set_cursor_passthrough", { ignore: value });
-    };
-
-    const unsubscribe = useEventStore.subscribe((state, prev) => {
-      if (state.mouse.x === prev.mouse.x && state.mouse.y === prev.mouse.y) return;
-      const dpr = window.devicePixelRatio || 1;
-      const x = state.mouse.x / dpr;
-      const y = state.mouse.y / dpr;
-
-      const drag = dragRef.current;
-      if (drag) {
-        const dx = x - drag.startX;
-        const dy = y - drag.startY;
-        if (!drag.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
-        if (!drag.moved) {
-          drag.moved = true;
-          setDragging(true);
-        }
-        setIgnore(false);
-        if (drag.mode === "move") {
-          // 右键移动:直接跟随光标
-          const el = rootRef.current;
-          setPos([
-            clamp(drag.originLeft + dx, 0, window.innerWidth - (el?.offsetWidth ?? 0)),
-            clamp(drag.originTop + dy, 0, window.innerHeight - (el?.offsetHeight ?? 0)),
-          ]);
-        } else {
-          // 左键拉拽:更新 spring 目标,产生跟手延迟 + 回弹
-          pullX.set(dx);
-          pullY.set(dy);
-        }
-        return;
-      }
-
-      // 常规翻转:进入伙伴矩形恢复点击,离开恢复全屏穿透
+    const beginDrag = (button: string) => {
       const el = rootRef.current;
       if (!el) return;
+      const m = useEventStore.getState().mouse;
+      const dpr = window.devicePixelRatio || 1;
+      const x = m.x / dpr;
+      const y = m.y / dpr;
       const r = el.getBoundingClientRect();
-      setIgnore(!(x >= r.left && x <= r.right && y >= r.top && y <= r.bottom));
-    });
+      // 仅当按下发生在伙伴矩形内才进入交互
+      if (x < r.left || x > r.right || y < r.top || y > r.bottom) return;
+      const physics = useCompanionStore.getState().config.physics;
+      const mode: DragMode = button === "Right" || !physics ? "move" : "pull";
+      dragRef.current = { mode, startX: x, startY: y, originLeft: r.left, originTop: r.top, moved: false };
+    };
 
-    const onMouseUp = () => {
+    const endDrag = () => {
       const drag = dragRef.current;
       if (!drag) return;
       dragRef.current = null;
@@ -151,34 +118,64 @@ export function CompanionLayer() {
           if (p) useCompanionStore.getState().setConfig({ pos: p });
         }
       } else {
-        // 拉拽松手:回弹到原位
         pullX.set(0);
         pullY.set(0);
-        if (!drag.moved) {
-          // 未移动 = 点击,切换气泡
-          setBubbleOpen((o) => !o);
-        }
+        if (!drag.moved) setBubbleOpen((o) => !o);
       }
     };
 
+    const unsubscribe = useEventStore.subscribe((state, prev) => {
+      const dpr = window.devicePixelRatio || 1;
+
+      // 1. 检测按下 / 松开(来自 Rust 全局钩子 MouseButtonEvent)
+      const pressedNow = state.pressedMouseButtons.filter((b) => !prev.pressedMouseButtons.includes(b));
+      const releasedNow = prev.pressedMouseButtons.filter((b) => !state.pressedMouseButtons.includes(b));
+      if (pressedNow.length > 0 && !dragRef.current) {
+        beginDrag(pressedNow[pressedNow.length - 1]);
+      }
+      if (releasedNow.length > 0 && dragRef.current) {
+        endDrag();
+      }
+
+      // 2. 拖拽/拉拽跟随(鼠标坐标变化)
+      if (state.mouse.x === prev.mouse.x && state.mouse.y === prev.mouse.y) return;
+      const drag = dragRef.current;
+      if (!drag) return;
+      const x = state.mouse.x / dpr;
+      const y = state.mouse.y / dpr;
+      const dx = x - drag.startX;
+      const dy = y - drag.startY;
+      if (!drag.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      if (!drag.moved) {
+        drag.moved = true;
+        setDragging(true);
+      }
+      if (drag.mode === "move") {
+        const el = rootRef.current;
+        setPos([
+          clamp(drag.originLeft + dx, 0, window.innerWidth - (el?.offsetWidth ?? 0)),
+          clamp(drag.originTop + dy, 0, window.innerHeight - (el?.offsetHeight ?? 0)),
+        ]);
+      } else {
+        pullX.set(dx);
+        pullY.set(dy);
+      }
+    });
+
+    // 失焦兜底:mouseup 可能丢失(如 Alt+Tab),放弃本次交互
     const onBlur = () => {
       dragRef.current = null;
       setDragging(false);
       setPos(null);
       pullX.set(0);
       pullY.set(0);
-      setIgnore(true);
     };
-
-    window.addEventListener("mouseup", onMouseUp);
     window.addEventListener("blur", onBlur);
     return () => {
       unsubscribe();
-      window.removeEventListener("mouseup", onMouseUp);
       window.removeEventListener("blur", onBlur);
-      void invoke("set_cursor_passthrough", { ignore: true });
     };
-  }, [config.enabled, pullX, pullY]);
+  }, [pullX, pullY]);
 
   // 敲键:压缩弹跳 + 冒 +1(首帧跳过;池上限 5 防堆积)
   useEffect(() => {
@@ -224,32 +221,9 @@ export function CompanionLayer() {
 
   const level = levelOf(stats.totalChars);
 
-  const onMouseDown = (e: React.MouseEvent) => {
-    if (e.button !== 0 && e.button !== 2) return;
-    e.preventDefault();
-    const el = rootRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    const m = useEventStore.getState().mouse;
-    const dpr = window.devicePixelRatio || 1;
-    // 右键 = 移动位置;左键 = Q 弹拉拽(物理关闭时左键也退化为移动)
-    const physics = useCompanionStore.getState().config.physics;
-    const mode: DragMode = e.button === 2 || !physics ? "move" : "pull";
-    dragRef.current = {
-      mode,
-      startX: m.x / dpr,
-      startY: m.y / dpr,
-      originLeft: r.left,
-      originTop: r.top,
-      moved: false,
-    };
-  };
-
   return (
     <div
       ref={rootRef}
-      onMouseDown={onMouseDown}
-      onContextMenu={(e) => e.preventDefault()}
       className={cn(
         "absolute flex flex-col items-center select-none",
         !pos && "bottom-8 right-8",

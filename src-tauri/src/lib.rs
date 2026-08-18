@@ -67,29 +67,6 @@ fn config_overlay_window(window: &tauri::WebviewWindow) {
     }
 }
 
-/// 覆盖层点击穿透开关:打字伙伴区域由前端判定(它实时持有鼠标坐标与自身矩形),
-/// 鼠标在伙伴上时前端传 false 恢复接收点击,离开时传 true 恢复全屏穿透。
-#[tauri::command]
-fn set_cursor_passthrough(app: tauri::AppHandle, ignore: bool) -> Result<(), String> {
-    let should = {
-        let state = app.state::<Mutex<AppState>>();
-        let mut app_state = state.lock().unwrap();
-        let should = ignore != app_state.cursor_ignored;
-        if should {
-            app_state.cursor_ignored = ignore;
-        }
-        should
-    };
-    if should {
-        if let Some(window) = app.get_webview_window("main") {
-            window
-                .set_ignore_cursor_events(ignore)
-                .map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(())
-}
-
 /// 覆盖层首帧就绪后由前端调用显示窗口。
 /// 启动时不直接 show:WebView 首帧渲染前 show 会出现一瞬间的透明窗体闪烁
 /// (参考软件 Keyviz 在 setup 直接 show,存在同样问题);改为前端挂载后通知。
@@ -228,7 +205,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             set_main_window_monitor,
             set_toggle_shortcut,
-            set_cursor_passthrough,
             show_main_window
         ])
         .run(tauri::generate_context!())

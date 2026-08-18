@@ -16,9 +16,8 @@ export interface KeycapTheme {
   text: string;
 }
 
-// 内置配色方案
+// 内置配色方案(对齐 Keyviz)
 export const colorSchemes: KeycapTheme[] = [
-  { name: "珊瑚", primary: "#ff6b6b", secondary: "#2b2b33", text: "#ffffff" },
   { name: "银色", primary: "#f8f8f8", secondary: "#dcdcdc", text: "#000000" },
   { name: "石墨", primary: "#606060", secondary: "#4b4b4b", text: "#f8f8f8" },
   { name: "青柠", primary: "#606060", secondary: "#4b4b4b", text: "#D6ED17" },
@@ -336,10 +335,13 @@ export const KeycapSettings = () => {
                 </ItemActions>
               </Item>
             )}
+            {modifier.highlight && appearance.style !== "laptop" && (
+              <h2 className="text-xs font-medium text-muted-foreground">普通颜色</h2>
+            )}
             <ItemGrid>
               <Item variant="muted" className={modifier.highlight && appearance.style !== "laptop" ? "" : "col-span-2"}>
                 <ItemContent>
-                  <ItemTitle>主色</ItemTitle>
+                  <ItemTitle>{appearance.style === "laptop" ? "普通" : "主色"}</ItemTitle>
                 </ItemContent>
                 <ItemActions>
                   <ColorField value={color.color} onChange={(color) => setColorStyle({ color })} />
@@ -368,24 +370,27 @@ export const KeycapSettings = () => {
               )}
             </ItemGrid>
             {modifier.highlight && appearance.style !== "laptop" && (
-              <ItemGrid>
-                <Item variant="muted">
-                  <ItemContent>
-                    <ItemTitle>修饰键主色</ItemTitle>
-                  </ItemContent>
-                  <ItemActions>
-                    <ColorField value={modifier.color} onChange={(color) => setModifierStyle({ color })} />
-                  </ItemActions>
-                </Item>
-                <Item variant="muted">
-                  <ItemContent>
-                    <ItemTitle>修饰键副色</ItemTitle>
-                  </ItemContent>
-                  <ItemActions>
-                    <ColorField value={modifier.secondaryColor} onChange={(secondaryColor) => setModifierStyle({ secondaryColor })} />
-                  </ItemActions>
-                </Item>
-              </ItemGrid>
+              <>
+                <h2 className="text-xs font-medium text-muted-foreground">修饰键颜色</h2>
+                <ItemGrid>
+                  <Item variant="muted">
+                    <ItemContent>
+                      <ItemTitle>主色</ItemTitle>
+                    </ItemContent>
+                    <ItemActions>
+                      <ColorField value={modifier.color} onChange={(color) => setModifierStyle({ color })} />
+                    </ItemActions>
+                  </Item>
+                  <Item variant="muted">
+                    <ItemContent>
+                      <ItemTitle>副色</ItemTitle>
+                    </ItemContent>
+                    <ItemActions>
+                      <ColorField value={modifier.secondaryColor} onChange={(secondaryColor) => setModifierStyle({ secondaryColor })} />
+                    </ItemActions>
+                  </Item>
+                </ItemGrid>
+              </>
             )}
           </CollapsibleContent>
         </Collapsible>

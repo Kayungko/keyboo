@@ -121,11 +121,11 @@ export const useStyleStore = create<StyleStore>()(
     (set, get) => ({
       appearance: {
         monitor: null,
-        flexDirection: "row",
+        flexDirection: "column",
         alignment: "bottom-center",
         marginX: 100,
         marginY: 100,
-        animation: "float",
+        animation: "fade",
         animationDuration: 0.25,
         style: "lowprofile",
         chromaKey: "none",
@@ -150,17 +150,17 @@ export const useStyleStore = create<StyleStore>()(
         borderColor: "#e5e5e5",
       },
       text: {
-        size: 28,
+        size: 32,
         color: "#000000",
         caps: "capitalize",
         variant: "text-short",
         alignment: "center",
       },
       border: {
-        enabled: false,
-        color: "#ffffff",
+        enabled: true,
+        color: "#1a1a1a",
         width: 2,
-        radius: 0.35,
+        radius: 0.5,
       },
       background: {
         enabled: true,
@@ -254,8 +254,8 @@ export const useStyleStore = create<StyleStore>()(
     {
       name: STYLE_STORE_NAME,
       storage: keybooStorage,
-      // v1:整体黑白化(键帽/文字/修饰键);v2:鼠标圆环白色→黑色;v3:拖尾独立颜色
-      version: 3,
+      // v1:整体黑白化(键帽/文字/修饰键);v2:鼠标圆环白色→黑色;v3:拖尾独立颜色;v4:对齐 Keyviz 结构参数
+      version: 4,
       migrate: (persisted, version) => {
         const state = persisted as Partial<StyleState>;
         if (version < 1) {
@@ -271,6 +271,16 @@ export const useStyleStore = create<StyleStore>()(
         if (version < 3) {
           if (state.mouse && state.mouse.trailColor === undefined) {
             state.mouse = { ...state.mouse, trailColor: state.mouse.color ?? "#1a1a1a" };
+          }
+        }
+        if (version < 4) {
+          // 对齐 Keyviz:列式排列、fade 动画、字号 32、边框启用+黑色+圆角 0.5
+          if (state.appearance) {
+            state.appearance = { ...state.appearance, flexDirection: "column", animation: "fade" };
+          }
+          if (state.text) state.text = { ...state.text, size: 32 };
+          if (state.border) {
+            state.border = { ...state.border, enabled: true, color: "#1a1a1a", radius: 0.5 };
           }
         }
         return state as StyleState;
