@@ -274,27 +274,39 @@ export function CompanionLayer() {
   );
 }
 
-// 黑白小团子:白色圆身 + 黑点眼睛(CSS 眨眼) + 微笑
+// 黑白熊猫汤圆(用户提供的设计稿,去背景;眼斑保留眨眼动画)
 function BlobSvg() {
   return (
     <svg
-      viewBox="0 0 100 96"
+      viewBox="0 0 1024 1024"
       className="block w-full"
       style={{ filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.4))" }}
+      role="img"
+      aria-label="键啵"
     >
+      {/* 耳朵 */}
+      <ellipse cx="329" cy="324" rx="83" ry="67" fill="#1D1D1D" transform="rotate(-22 329 324)" />
+      <ellipse cx="684" cy="318" rx="83" ry="67" fill="#1D1D1D" transform="rotate(22 684 318)" />
+      {/* 汤圆身体 */}
       <path
-        d="M50 4 C76 4 94 26 94 54 C94 80 75 92 50 92 C25 92 6 80 6 54 C6 26 24 4 50 4 Z"
-        fill="#fafafa"
+        d="M512 256 C672 256 785 374 785 531 C785 683 673 767 508 767 C347 767 239 680 239 531 C239 377 351 256 512 256Z"
+        fill="#FFFDF7"
       />
-      <circle className="companion-eye" cx="36" cy="50" r="5.5" fill="#141414" />
-      <circle className="companion-eye" cx="64" cy="50" r="5.5" fill="#141414" />
+      {/* 扁平高光 */}
       <path
-        d="M42 66 Q50 73 58 66"
-        stroke="#141414"
-        strokeWidth="3"
-        strokeLinecap="round"
-        fill="none"
+        d="M340 402C385 313 484 286 568 305C468 318 390 360 340 443Z"
+        fill="#FFFFFF"
+        opacity=".85"
       />
+      {/* 熊猫眼斑:外层 g 承担旋转,CSS 眨眼动画作用于内层椭圆避免 transform 覆盖 */}
+      <g transform="rotate(25 407 490)">
+        <ellipse className="companion-eye" cx="407" cy="490" rx="68" ry="91" fill="#1D1D1D" />
+      </g>
+      <g transform="rotate(-25 617 490)">
+        <ellipse className="companion-eye" cx="617" cy="490" rx="68" ry="91" fill="#1D1D1D" />
+      </g>
+      {/* 嘴 */}
+      <ellipse cx="512" cy="585" rx="39" ry="31" fill="#1D1D1D" transform="rotate(-8 512 585)" />
     </svg>
   );
 }

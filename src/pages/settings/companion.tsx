@@ -27,7 +27,7 @@ export const CompanionSettings = () => {
           <ItemTitle>
             <HugeiconsIcon icon={HappyIcon} size="1em" /> 启用伙伴
           </ItemTitle>
-          <ItemDescription>桌面右下角的黑白小团子,陪你打字、吃经验成长</ItemDescription>
+          <ItemDescription>桌面右下角的熊猫汤圆,陪你打字、吃经验成长</ItemDescription>
         </ItemContent>
         <ItemActions>
           <Switch checked={config.enabled} onChange={(enabled) => setConfig({ enabled })} />
@@ -64,7 +64,7 @@ export const CompanionSettings = () => {
         <Item variant="muted">
           <ItemContent>
             <ItemTitle>皮肤</ItemTitle>
-            <ItemDescription>黑白小团子(更多皮肤后期扩展)</ItemDescription>
+            <ItemDescription>黑白熊猫汤圆(更多皮肤后期扩展)</ItemDescription>
           </ItemContent>
         </Item>
         <Item variant="muted">
