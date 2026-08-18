@@ -47,6 +47,40 @@ fn set_main_window_monitor(app: tauri::AppHandle, monitor_name: Option<String>) 
     Ok(())
 }
 
+/// 把覆盖层铺满整个虚拟屏幕(所有显示器的并集)。
+/// 相比单显示器覆盖,兼容双屏与远程桌面(RDP 单屏)两种分辨率场景:
+/// RDP 会话下虚拟屏幕尺寸 = 会话分辨率,窗口据此铺满,不再留白。
+fn fit_virtual_screen(app: &tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+            SM_YVIRTUALSCREEN,
+        };
+        let Some(window) = app.get_webview_window("main") else {
+            return Err("main window not found".to_string());
+        };
+        unsafe {
+            let x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+            let y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+            let w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+            let h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+            if w <= 0 || h <= 0 {
+                return Err("invalid virtual screen size".to_string());
+            }
+            window
+                .set_position(tauri::PhysicalPosition::new(x, y))
+                .map_err(|e| e.to_string())?;
+            window
+                .set_size(tauri::PhysicalSize::new(w as u32, h as u32))
+                .map_err(|e| e.to_string())?;
+            let state = app.state::<Mutex<AppState>>();
+            state.lock().unwrap().monitor_position = (x, y);
+        }
+    }
+    Ok(())
+}
+
 /// 覆盖层窗口配置:点击穿透 + 置顶。
 /// set_ignore_cursor_events 让窗口对鼠标完全透明(WS_EX_TRANSPARENT),
 /// 否则全屏覆盖层会拦截左键点击、右键还会弹出 WebView 默认菜单。
@@ -159,23 +193,12 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // 覆盖层主窗口(默认铺满主显示器)。
+            // 覆盖层主窗口:铺满虚拟屏幕(兼容双屏与远程桌面单屏)。
             // 点击穿透 + 置顶 + 尺寸在不可见时先配好;show 由前端首帧后触发
             // (show_main_window),避免 WebView 未渲染时的窗体闪烁。
             if let Some(window) = app.get_webview_window("main") {
                 config_overlay_window(&window);
-                if let Ok(monitors) = tauri::WebviewWindow::available_monitors(&window) {
-                    if let Some(monitor) = monitors.first() {
-                        let _ = window.set_position(*monitor.position());
-                        let _ = window.set_size(tauri::PhysicalSize::new(
-                            monitor.size().width,
-                            monitor.size().height,
-                        ));
-                        let state = app.state::<Mutex<AppState>>();
-                        state.lock().unwrap().monitor_position =
-                            (monitor.position().x, monitor.position().y);
-                    }
-                }
+                let _ = fit_virtual_screen(app.handle());
             }
 
             // 兜底:前端异常未能通知时,2s 后仍然显示(重复 show 无副作用)
@@ -185,6 +208,33 @@ pub fn run() {
                     std::thread::sleep(std::time::Duration::from_secs(2));
                     if let Some(window) = app_handle.get_webview_window("main") {
                         let _ = window.show();
+                    }
+                });
+            }
+
+            // 显示器/RDP 分辨率变化监听:每 2s 检查虚拟屏幕尺寸,变化时重铺
+            {
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    #[cfg(target_os = "windows")]
+                    {
+                        use windows::Win32::UI::WindowsAndMessaging::{
+                            GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
+                        };
+                        let mut last_w = 0;
+                        let mut last_h = 0;
+                        loop {
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            unsafe {
+                                let w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+                                let h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+                                if (w, h) != (last_w, last_h) {
+                                    last_w = w;
+                                    last_h = h;
+                                    let _ = fit_virtual_screen(&app_handle);
+                                }
+                            }
+                        }
                     }
                 });
             }

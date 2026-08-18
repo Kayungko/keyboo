@@ -5,12 +5,17 @@
 // 只影响附近区域 → "只有那一块被拉伸"),每个顶点独立 spring 回弹
 // (欠阻尼 → 松手 overshoot 果冻感),渲染时三角化 + 仿射纹理映射。
 //
-// 与 SVG 版(带眨眼)并存:拖动/回弹期间本组件可见,稳定后切回 SVG。
+// 质量要点:
+// - 网格 10×10(顶点密集,变形平滑,无明显折角)
+// - 离屏光栅化 512px(纹理采样精度足够)
+// - 渲染区加 30% padding(顶点位移不会越界被裁切)
+// - 三角形外扩 1.5%(相邻三角形重叠,消除接缝漏底)
 
 import { useEffect, useRef } from "react";
 
-const GRID = 6; // 6×6 段 → 7×7 顶点,72 三角形,96px 角色够平滑
-const CANVAS = 256; // 离屏光栅化尺寸
+const GRID = 10; // 10×10 段 → 11×11 顶点,200 三角形
+const CANVAS = 512; // 离屏光栅化尺寸
+const PAD_RATIO = 0.3; // 渲染区相对角色的 padding(防裁切)
 
 // 熊猫汤圆(与 BlobSvg 的 JSX 内容一致,去除 drop-shadow——阴影移到外层容器)
 const BLOB_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
@@ -42,10 +47,12 @@ interface Vertex {
 }
 
 // 弹簧参数(欠阻尼 → overshoot)
-const STIFFNESS = 0.28;
-const DAMPING = 0.82;
+const STIFFNESS = 0.25;
+const DAMPING = 0.85;
 // 高斯衰减:sigma²=0.12 → sigma≈0.35,拖拽只影响附近 ~1/3 区域
 const SIGMA2 = 0.12;
+// 三角形外扩比例(消除接缝漏底)
+const EXPAND = 1.015;
 
 export function SoftBody({
   size,
@@ -114,14 +121,17 @@ export function SoftBody({
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  const pad = size * PAD_RATIO;
+
   return (
     <canvas
       ref={canvasRef}
       style={{
         position: "absolute",
-        inset: 0,
-        width: "100%",
-        height: "100%",
+        left: -pad,
+        top: -pad,
+        width: size + pad * 2,
+        height: size + pad * 2,
         opacity: visible ? 1 : 0,
         pointerEvents: "none",
       }}
@@ -138,7 +148,9 @@ function updateAndRender(
 ) {
   const ctx = canvas.getContext("2d")!;
   const dpr = window.devicePixelRatio || 1;
-  const pw = Math.max(1, Math.round(size * dpr));
+  const pad = size * PAD_RATIO;
+  const renderSize = size + pad * 2;
+  const pw = Math.max(1, Math.round(renderSize * dpr));
   if (canvas.width !== pw || canvas.height !== pw) {
     canvas.width = pw;
     canvas.height = pw;
@@ -162,11 +174,13 @@ function updateAndRender(
     v.cy += v.vy;
   }
 
-  // 渲染
+  // 渲染:网格顶点 rest 归一化坐标 → 渲染区(含 padding)坐标
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  const S = size;
   const stride = GRID + 1;
+  const toScreenX = (n: number) => pad + n * size;
+  const toScreenY = (n: number) => pad + n * size;
+
   for (let gy = 0; gy < GRID; gy++) {
     for (let gx = 0; gx < GRID; gx++) {
       const i00 = gy * stride + gx;
@@ -177,16 +191,18 @@ function updateAndRender(
       const v10 = verts[i10];
       const v01 = verts[i01];
       const v11 = verts[i11];
-      drawTri(
-        ctx, off,
-        v00.cx * S, v00.cy * S, v10.cx * S, v10.cy * S, v11.cx * S, v11.cy * S,
-        v00.rx * CANVAS, v00.ry * CANVAS, v10.rx * CANVAS, v10.ry * CANVAS, v11.rx * CANVAS, v11.ry * CANVAS,
-      );
-      drawTri(
-        ctx, off,
-        v00.cx * S, v00.cy * S, v11.cx * S, v11.cy * S, v01.cx * S, v01.cy * S,
-        v00.rx * CANVAS, v00.ry * CANVAS, v11.rx * CANVAS, v11.ry * CANVAS, v01.rx * CANVAS, v01.ry * CANVAS,
-      );
+      const x00 = toScreenX(v00.cx), y00 = toScreenY(v00.cy);
+      const x10 = toScreenX(v10.cx), y10 = toScreenY(v10.cy);
+      const x01 = toScreenX(v01.cx), y01 = toScreenY(v01.cy);
+      const x11 = toScreenX(v11.cx), y11 = toScreenY(v11.cy);
+      const u00 = v00.rx * CANVAS, v00v = v00.ry * CANVAS;
+      const u10 = v10.rx * CANVAS, v10v = v10.ry * CANVAS;
+      const u01 = v01.rx * CANVAS, v01v = v01.ry * CANVAS;
+      const u11 = v11.rx * CANVAS, v11v = v11.ry * CANVAS;
+      // 三角形 1: (00, 10, 11)
+      drawTri(ctx, off, x00, y00, x10, y10, x11, y11, u00, v00v, u10, v10v, u11, v11v);
+      // 三角形 2: (00, 11, 01)
+      drawTri(ctx, off, x00, y00, x11, y11, x01, y01, u00, v00v, u11, v11v, u01, v01v);
     }
   }
 }
@@ -197,6 +213,16 @@ function drawTri(
   x0: number, y0: number, x1: number, y1: number, x2: number, y2: number,
   u0: number, v0: number, u1: number, v1: number, u2: number, v2: number,
 ) {
+  // 三角形外扩(沿重心),消除相邻三角形接缝漏底
+  const cx = (x0 + x1 + x2) / 3;
+  const cy = (y0 + y1 + y2) / 3;
+  x0 = cx + (x0 - cx) * EXPAND;
+  y0 = cy + (y0 - cy) * EXPAND;
+  x1 = cx + (x1 - cx) * EXPAND;
+  y1 = cy + (y1 - cy) * EXPAND;
+  x2 = cx + (x2 - cx) * EXPAND;
+  y2 = cy + (y2 - cy) * EXPAND;
+
   ctx.save();
   ctx.beginPath();
   ctx.moveTo(x0, y0);
