@@ -1,0 +1,144 @@
+//! Keyboo 键啵 — 桌面按键可视化与打字伙伴
+//! MIT License © 2026 Keyboo
+
+use std::sync::Mutex;
+
+use tauri::{
+    image::Image,
+    include_image,
+    menu::{Menu, MenuItem},
+    tray::TrayIconBuilder,
+    Emitter, Manager, WebviewWindowBuilder,
+};
+
+mod input;
+mod state;
+
+use input::start_input_listener;
+use state::AppState;
+
+/// 把覆盖层主窗口移动到指定名称的显示器上
+#[tauri::command]
+fn set_main_window_monitor(app: tauri::AppHandle, monitor_name: Option<String>) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    let monitors = window.available_monitors().map_err(|e| e.to_string())?;
+    if monitors.is_empty() {
+        return Err("no monitors found".to_string());
+    }
+    let monitor = monitors
+        .iter()
+        .find(|m| m.name().map(|s| s.as_str()) == monitor_name.as_deref())
+        .unwrap_or(&monitors[0]);
+
+    let size = monitor.size();
+    let position = monitor.position();
+    window
+        .set_position(*position)
+        .map_err(|e| e.to_string())?;
+    window
+        .set_size(tauri::PhysicalSize::new(size.width, size.height))
+        .map_err(|e| e.to_string())?;
+
+    // 记录显示器原点,供鼠标坐标换算
+    let state = app.state::<Mutex<AppState>>();
+    state.lock().unwrap().monitor_position = (position.x, position.y);
+    Ok(())
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|_, __, ___| {}))
+        .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+
+            // 全局状态
+            app.manage(Mutex::new(AppState::new()));
+
+            // 托盘菜单
+            let toggle_item = MenuItem::with_id(app, "toggle", "暂停", true, None::<&str>)?;
+            let silent_item = MenuItem::with_id(app, "silent", "进入静默模式", true, None::<&str>)?;
+            let settings_item = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+
+            // 启动全局输入捕获(钩子线程 + 工作线程)
+            start_input_listener(app_handle.clone(), toggle_item.clone());
+
+            let menu = Menu::with_items(app, &[&toggle_item, &silent_item, &settings_item, &quit_item])?;
+            let _ = TrayIconBuilder::with_id("keyboo-tray")
+                .icon(Image::from(include_image!("icons/32x32.png")))
+                .tooltip("Keyboo 键啵")
+                .menu(&menu)
+                .show_menu_on_left_click(true)
+                .on_menu_event(move |app, event| match event.id.as_ref() {
+                    "toggle" => {
+                        let state = app.state::<Mutex<AppState>>();
+                        let mut app_state = state.lock().unwrap();
+                        app_state.toggle_listening(app, &toggle_item);
+                    }
+                    "silent" => {
+                        let state = app.state::<Mutex<AppState>>();
+                        let mut app_state = state.lock().unwrap();
+                        app_state.toggle_silent(app, &silent_item);
+                    }
+                    "settings" => {
+                        if let Some(window) = app.get_webview_window("settings") {
+                            let _ = window.set_focus();
+                            return;
+                        }
+                        let url = tauri::WebviewUrl::App("index.html#/settings".into());
+                        let window = WebviewWindowBuilder::new(app, "settings", url)
+                            .title("Keyboo 设置")
+                            .inner_size(760.0, 600.0)
+                            .min_inner_size(600.0, 460.0)
+                            .maximizable(false)
+                            .build()
+                            .unwrap();
+                        let _ = window.set_focus();
+                        let _ = app.emit_to("main", "settings-window", true);
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .build(app)?;
+
+            // 显示覆盖层主窗口(默认铺满主显示器)
+            if let Some(window) = app.get_webview_window("main") {
+                if let Ok(monitors) = tauri::WebviewWindow::available_monitors(&window) {
+                    if let Some(monitor) = monitors.first() {
+                        let _ = window.set_position(*monitor.position());
+                        let _ = window.set_size(tauri::PhysicalSize::new(
+                            monitor.size().width,
+                            monitor.size().height,
+                        ));
+                        let state = app.state::<Mutex<AppState>>();
+                        state.lock().unwrap().monitor_position =
+                            (monitor.position().x, monitor.position().y);
+                    }
+                }
+                let _ = window.show();
+            }
+
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // 设置窗口关闭时通知覆盖层
+            if window.label() != "settings" {
+                return;
+            }
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                let _ = window
+                    .app_handle()
+                    .emit_to("main", "settings-window", false);
+            }
+        })
+        .invoke_handler(tauri::generate_handler![set_main_window_monitor])
+        .run(tauri::generate_context!())
+        .expect("error while running Keyboo");
+}
