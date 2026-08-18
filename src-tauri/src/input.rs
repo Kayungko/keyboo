@@ -331,6 +331,8 @@ fn shortcut_matches(shortcut: &[String], pressed: &[String]) -> bool {
     want == got
 }
 
+/// 打字伙伴的点击穿透翻转由前端判定(前端实时持有鼠标坐标与自身矩形),
+/// 通过 set_cursor_passthrough 命令下发,这里不再做区域判断。
 fn emit_mouse_move(app: &AppHandle, x: i32, y: i32) {
     // 先拷贝 listening 与显示器原点并释放锁,再 emit,避免持锁派发
     let (listening, origin_x, origin_y) = {

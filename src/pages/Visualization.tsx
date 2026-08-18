@@ -4,7 +4,9 @@ import { KeyboardLayout } from "@/components/KeyboardLayout";
 import { KeyOverlay } from "@/components/KeyOverlay";
 import { MouseOverlay } from "@/components/MouseOverlay";
 import { MouseTrail } from "@/components/MouseTrail";
+import { CompanionLayer } from "@/components/CompanionLayer";
 import type { EventPayload } from "@/lib/types";
+import { COMPANION_STORE_NAME, loadCompanionPersist, useCompanionStore } from "@/stores/useCompanionStore";
 import { EVENT_STORE_NAME, useEventStore } from "@/stores/useEventStore";
 import { STYLE_STORE_NAME, useStyleStore } from "@/stores/useStyleStore";
 import { listenSync } from "@/stores/sync";
@@ -62,7 +64,11 @@ export function Visualization() {
       // 双窗口状态同步
       listenSync(EVENT_STORE_NAME, useEventStore.setState),
       listenSync(STYLE_STORE_NAME, useStyleStore.setState),
+      listenSync(COMPANION_STORE_NAME, useCompanionStore.setState),
     ];
+
+    // 伙伴配置/统计从磁盘加载(覆盖层是统计写盘方)
+    void loadCompanionPersist();
 
     const timer = setInterval(tick, 250);
 
@@ -117,6 +123,7 @@ export function Visualization() {
       <MouseTrail />
       <MouseOverlay />
       {displayMode === "keyboard" ? <KeyboardLayout /> : <KeyOverlay />}
+      <CompanionLayer />
       {badgeLayer}
     </div>
   );

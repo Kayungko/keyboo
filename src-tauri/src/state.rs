@@ -12,6 +12,8 @@ pub struct AppState {
     pub toggle_shortcut: Vec<String>,
     /// 覆盖层所在显示器的原点(物理像素),用于鼠标坐标换算
     pub monitor_position: (i32, i32),
+    /// 覆盖层当前是否处于点击穿透状态(打字伙伴悬停时前端关闭穿透)
+    pub cursor_ignored: bool,
 }
 
 impl AppState {
@@ -35,6 +37,7 @@ impl AppState {
             silent: false,
             toggle_shortcut,
             monitor_position: (0, 0),
+            cursor_ignored: true,
         }
     }
 

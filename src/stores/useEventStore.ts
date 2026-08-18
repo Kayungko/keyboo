@@ -4,6 +4,7 @@
 import { EventPayload, KeyEvent, KeyGroup, MODIFIERS, MouseButtonEvent, MouseMoveEvent, MouseWheelEvent, RawKey, RawKeyEvent } from "@/lib/types";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
+import { useCompanionStore } from "./useCompanionStore";
 import { keybooStorage } from "./persist";
 
 export const EVENT_STORE_NAME = "keyboo-event-store";
@@ -133,6 +134,9 @@ export const useEventStore = create<EventStore>()(
           set({ pressedKeys, pressedKeyTimes });
           return;
         }
+
+        // 2.5 打字伙伴计数:真实新按下且通过过滤(保活重发在步骤 0 已 return)
+        useCompanionStore.getState().registerKey(event.name);
 
         let groups = [...state.groups];
         const last = groups.length - 1;

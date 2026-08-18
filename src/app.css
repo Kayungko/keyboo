@@ -15,7 +15,7 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --color-keyboo: #ff6b6b;
+  --color-keyboo: var(--foreground);
 }
 
 :root {
@@ -23,15 +23,15 @@
   --foreground: #1a1a1a;
   --muted: #f4f4f5;
   --muted-foreground: #71717a;
-  --primary: #ff6b6b;
+  --primary: #1a1a1a;
   --primary-foreground: #ffffff;
   --secondary: #f4f4f5;
   --secondary-foreground: #1a1a1a;
-  --accent: #fff1f1;
-  --accent-foreground: #c94040;
+  --accent: #f4f4f5;
+  --accent-foreground: #1a1a1a;
   --border: #e4e4e7;
   --input: #e4e4e7;
-  --ring: #ff6b6b;
+  --ring: #1a1a1a;
 }
 
 .dark {
@@ -39,15 +39,15 @@
   --foreground: #fafafa;
   --muted: #27272a;
   --muted-foreground: #a1a1aa;
-  --primary: #ff6b6b;
-  --primary-foreground: #ffffff;
+  --primary: #fafafa;
+  --primary-foreground: #18181b;
   --secondary: #27272a;
   --secondary-foreground: #fafafa;
-  --accent: #3f2727;
-  --accent-foreground: #ffb4b4;
+  --accent: #27272a;
+  --accent-foreground: #fafafa;
   --border: #3f3f46;
   --input: #3f3f46;
-  --ring: #ff6b6b;
+  --ring: #fafafa;
 }
 
 @layer base {
@@ -62,4 +62,15 @@
     /* 覆盖层主窗口必须完全透明;白色背景只给设置窗口(见 Settings 根容器) */
     background: transparent;
   }
+}
+
+/* 打字伙伴:眨眼动画 */
+@keyframes companion-blink {
+  0%, 91%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.12); }
+}
+.companion-eye {
+  animation: companion-blink 4.2s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
 }

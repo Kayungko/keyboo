@@ -1,26 +1,29 @@
 // Keyboo 设置窗口(布局与交互对齐 Keyviz)
 
 import { ThemeModeToggle } from "@/components/ui/theme-mode-toggle";
-import { ComputerIcon, InformationSquareIcon, KeyboardIcon, Mouse09Icon, Settings03Icon } from "@hugeicons/core-free-icons";
+import { ComputerIcon, HappyIcon, InformationSquareIcon, KeyboardIcon, Mouse09Icon, Settings03Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Toaster } from "sonner";
 import { useEffect, useState } from "react";
+import { COMPANION_STORE_NAME, useCompanionStore } from "@/stores/useCompanionStore";
 import { EVENT_STORE_NAME, useEventStore } from "@/stores/useEventStore";
 import { STYLE_STORE_NAME, useStyleStore } from "@/stores/useStyleStore";
 import { startSyncSender } from "@/stores/sync";
 import { AboutPage } from "./settings/about";
 import { AppearanceSettings } from "./settings/appearance";
+import { CompanionSettings } from "./settings/companion";
 import { GeneralSettings } from "./settings/general";
 import { KeycapSettings } from "./settings/keycap";
 import { MouseSettings } from "./settings/mouse";
 
-export const VERSION = "0.2.1";
+export const VERSION = "0.3.0";
 
 const sideBar = [
   { id: "general", label: "常规", icon: Settings03Icon },
   { id: "appearance", label: "外观", icon: ComputerIcon },
   { id: "keycap", label: "键帽", icon: KeyboardIcon },
   { id: "mouse", label: "鼠标", icon: Mouse09Icon },
+  { id: "companion", label: "伙伴", icon: HappyIcon },
 ];
 
 export default function Settings() {
@@ -37,6 +40,8 @@ export default function Settings() {
       startSyncSender(STYLE_STORE_NAME, useStyleStore, [
         "appearance", "layout", "color", "modifier", "text", "border", "background", "mouse",
       ]),
+      // stats 也同步:设置页重置统计时即时通知覆盖层清零
+      startSyncSender(COMPANION_STORE_NAME, useCompanionStore, ["config", "stats"]),
     ];
     return () => unsubscribers.forEach((un) => un());
   }, []);
@@ -46,7 +51,7 @@ export default function Settings() {
       {/* 侧边栏 */}
       <div className="flex w-44 flex-col gap-y-1 rounded-xl p-2">
         <div className="m-2 mb-2 flex items-center gap-x-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-keyboo text-sm font-bold text-white">K</div>
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-keyboo text-sm font-bold text-background">K</div>
           <div className="flex flex-col gap-y-0.5">
             <h1 className="text-sm font-semibold">Keyboo</h1>
             <p className="text-xs text-gray-400">v{VERSION}</p>
@@ -91,6 +96,7 @@ export default function Settings() {
         {activeTab === "appearance" && <AppearanceSettings />}
         {activeTab === "keycap" && <KeycapSettings />}
         {activeTab === "mouse" && <MouseSettings />}
+        {activeTab === "companion" && <CompanionSettings />}
         {activeTab === "about" && <AboutPage />}
       </div>
 
