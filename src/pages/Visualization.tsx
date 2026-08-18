@@ -1,8 +1,10 @@
 // 覆盖层主页面:接线输入事件、同步、静默模式与状态角标
 
+import { KeyboardLayout } from "@/components/KeyboardLayout";
 import { KeyOverlay } from "@/components/KeyOverlay";
 import { MouseOverlay } from "@/components/MouseOverlay";
-import type { InputPayload } from "@/lib/types";
+import { MouseTrail } from "@/components/MouseTrail";
+import type { EventPayload } from "@/lib/types";
 import { EVENT_STORE_NAME, useEventStore } from "@/stores/useEventStore";
 import { STYLE_STORE_NAME, useStyleStore } from "@/stores/useStyleStore";
 import { listenSync } from "@/stores/sync";
@@ -16,6 +18,8 @@ const STATUS_BADGE_MS = 1500;
 
 export function Visualization() {
   const monitor = useStyleStore((s) => s.appearance.monitor);
+  const chromaKey = useStyleStore((s) => s.appearance.chromaKey);
+  const displayMode = useStyleStore((s) => s.appearance.displayMode);
   const onEvent = useEventStore((s) => s.onEvent);
   const tick = useEventStore((s) => s.tick);
 
@@ -34,7 +38,7 @@ export function Visualization() {
   useEffect(() => {
     const unlisteners = [
       // 输入事件:静默模式下直接丢弃(输入敏感内容时不显示也不回放)
-      listen<InputPayload>("input-event", (event) => {
+      listen<EventPayload>("input-event", (event) => {
         if (silentRef.current) return;
         onEvent(event.payload);
       }),
@@ -42,17 +46,15 @@ export function Visualization() {
       listen<boolean>("settings-window", (event) => {
         useEventStore.setState({ settingsOpen: event.payload });
       }),
-      // 监听开关(托盘 + Shift+F10)
+      // 监听开关(托盘 + 全局快捷键)
       listen<boolean>("listening-toggle", (event) => {
         setListening(event.payload);
-        useEventStore.setState({ listening: event.payload });
         showBadge(event.payload ? "已恢复监听" : "已暂停监听");
       }),
       // 静默模式
       listen<boolean>("silent-toggle", (event) => {
         silentRef.current = event.payload;
         setSilent(event.payload);
-        useEventStore.setState({ silent: event.payload });
         showBadge(event.payload ? "静默模式已开启" : "静默模式已关闭");
       }),
       // 双窗口状态同步
@@ -77,6 +79,12 @@ export function Visualization() {
     });
   }, [monitor]);
 
+  // OBS 色键:背景填充纯色供直播软件抠像;关闭时保持透明
+  const chromaBackground =
+    chromaKey === "magenta" ? "#FF00FF"
+      : chromaKey === "green" ? "#00FF00"
+        : undefined;
+
   const badgeLayer = (
     <AnimatePresence>
       {badge && (
@@ -96,16 +104,17 @@ export function Visualization() {
   // 暂停或静默:隐藏全部可视化,仅保留状态角标
   if (!listening || silent) {
     return (
-      <div className="w-screen h-screen relative overflow-hidden">
+      <div className="w-screen h-screen relative overflow-hidden" style={{ backgroundColor: chromaBackground }}>
         {badgeLayer}
       </div>
     );
   }
 
   return (
-    <div className="w-screen h-screen relative overflow-hidden">
+    <div className="w-screen h-screen relative overflow-hidden" style={{ backgroundColor: chromaBackground }}>
+      <MouseTrail />
       <MouseOverlay />
-      <KeyOverlay />
+      {displayMode === "keyboard" ? <KeyboardLayout /> : <KeyOverlay />}
       {badgeLayer}
     </div>
   );

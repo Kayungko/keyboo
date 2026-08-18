@@ -1,30 +1,31 @@
 import { useEventStore } from "@/stores/useEventStore";
-import { alignmentFlex, useStyleStore } from "@/stores/useStyleStore";
-import { AnimatePresence, motion, type Variants } from "motion/react";
+import { alignmentForRow, useStyleStore } from "@/stores/useStyleStore";
+import { easeInQuint, easeOutQuint } from "@/lib/utils";
+import { AnimatePresence, motion, Variants } from "motion/react";
 import { Fragment, useMemo } from "react";
-import { Keycap } from "./Keycap";
+import { Keycap } from "./keycaps";
 
-// 组级淡入淡出的缓动
-const EASE_OUT: [number, number, number, number] = [0.23, 1, 0.32, 1];
-const EASE_IN: [number, number, number, number] = [0.76, 0.05, 0.86, 0.06];
+// 连接符样式:字号约为主键一半、半透明,随键帽一起进出场
+const separatorStyle = (textSize: number) => ({
+  fontSize: textSize * 0.5,
+});
 
-/** 连接符进出场 */
 const separatorVariants: Variants = {
-  visible: { opacity: 0.55, transition: { duration: 0.15, ease: EASE_OUT } },
-  hidden: { opacity: 0, transition: { duration: 0.1, ease: EASE_IN } },
+  visible: { opacity: 0.55, transition: { duration: 0.15, ease: easeOutQuint } },
+  hidden: { opacity: 0, transition: { duration: 0.1, ease: easeInQuint } },
 };
 
-export function KeyOverlay() {
-  const groups = useEventStore((s) => s.groups);
-  const pressedKeys = useEventStore((s) => s.pressedKeys);
-  const showHistory = useEventStore((s) => s.showHistory);
+export const KeyOverlay = () => {
+  const pressedKeys = useEventStore((state) => state.pressedKeys);
+  const groups = useEventStore((state) => state.groups);
+  const showHistory = useEventStore((state) => state.showEventHistory);
 
-  const appearance = useStyleStore((s) => s.appearance);
-  const text = useStyleStore((s) => s.text);
-  const background = useStyleStore((s) => s.background);
-  const border = useStyleStore((s) => s.border);
+  const appearance = useStyleStore((state) => state.appearance);
+  const text = useStyleStore((state) => state.text);
+  const border = useStyleStore((state) => state.border);
+  const background = useStyleStore((state) => state.background);
 
-  const alignment = alignmentFlex(appearance.alignment);
+  const alignment = alignmentForRow[appearance.alignment];
 
   const containerStyle: React.CSSProperties = {
     flexDirection: appearance.flexDirection,
@@ -37,16 +38,16 @@ export function KeyOverlay() {
 
   const groupStyle: React.CSSProperties = {
     display: "flex",
-    columnGap: appearance.keyStyle === "minimal" ? text.size * 0.18 : text.size * 0.3,
+    columnGap: appearance.style === "minimal" ? text.size * 0.15 : text.size * 0.3,
     ...(background.enabled && {
-      paddingInline: text.size * 0.45,
-      paddingBlock: appearance.keyStyle === "minimal" ? text.size * 0.3 : text.size * 0.4,
+      paddingInline: text.size * 0.4,
+      paddingBlock: appearance.style === "minimal" ? text.size * 0.25 : text.size * 0.4,
       background: background.color,
       borderRadius: border.radius * (text.size * 1.75),
     }),
   };
 
-  // 组进出场:进入 easeOut 淡入 + 缩放回位,退出 easeIn 淡出且时长 ×0.7 更利落。
+  // 组进出场:进入 easeOut 淡入,退出 easeIn 淡出且时长 ×0.7 更利落。
   // custom 参数为深度(0=最新组):旧组按深度衰减透明度/缩放,形成层次;
   // 组内子元素带轻微 stagger,连按有层叠节奏。
   const groupVariants = useMemo<Variants>(() => ({
@@ -55,13 +56,13 @@ export function KeyOverlay() {
       scale: Math.max(0.94, 1 - depth * 0.02),
       transition: {
         duration: showHistory ? appearance.animationDuration : 0,
-        ease: EASE_OUT,
+        ease: easeOutQuint,
         staggerChildren: 0.025,
       },
     }),
     hidden: () => ({
       opacity: 0,
-      transition: { duration: showHistory ? appearance.animationDuration * 0.7 : 0, ease: EASE_IN },
+      transition: { duration: showHistory ? appearance.animationDuration * 0.7 : 0, ease: easeInQuint },
     }),
   }), [showHistory, appearance.animationDuration]);
 
@@ -69,13 +70,13 @@ export function KeyOverlay() {
   // zoom 起点 0.6 避免从零放大的闪烁。
   const keyVariants = useMemo<Variants>(() => {
     const enter = { type: "spring" as const, stiffness: 520, damping: 34, mass: 0.9 };
-    const exit = { duration: appearance.animationDuration * 0.7, ease: EASE_IN };
+    const exit = { duration: appearance.animationDuration * 0.7, ease: easeInQuint };
     switch (appearance.animation) {
       case "none":
         return { visible: {}, hidden: {} };
       case "fade":
         return {
-          visible: { opacity: 1, transition: { duration: appearance.animationDuration, ease: EASE_OUT } },
+          visible: { opacity: 1, transition: { duration: appearance.animationDuration, ease: easeOutQuint } },
           hidden: { opacity: 0, transition: exit },
         };
       case "zoom":
@@ -98,16 +99,19 @@ export function KeyOverlay() {
 
   const noAnimation = appearance.animation === "none";
 
+  const renderSeparator = (keyIndex: number, groupKeyCount: number) =>
+    keyIndex > 0 && groupKeyCount > 1;
+
   const renderGroups = (animated: boolean) =>
     groups.map((group, groupIndex) => {
       const depth = groups.length - 1 - groupIndex;
-      const content = group.keys.map((keyPress, keyIndex) => (
-        <Fragment key={keyPress.name}>
-          {keyIndex > 0 && group.keys.length > 1 && (
+      const content = group.keys.map((event, keyIndex) => (
+        <Fragment key={event.name}>
+          {renderSeparator(keyIndex, group.keys.length) && (
             animated ? (
               <motion.span
                 className="self-center select-none"
-                style={{ fontSize: text.size * 0.5, color: text.color }}
+                style={{ ...separatorStyle(text.size), color: text.color }}
                 variants={separatorVariants}
                 initial="hidden"
                 animate="visible"
@@ -116,7 +120,10 @@ export function KeyOverlay() {
                 +
               </motion.span>
             ) : (
-              <span className="self-center select-none" style={{ fontSize: text.size * 0.5, color: text.color, opacity: 0.55 }}>
+              <span
+                className="self-center select-none"
+                style={{ ...separatorStyle(text.size), color: text.color, opacity: 0.55 }}
+              >
                 +
               </span>
             )
@@ -128,17 +135,19 @@ export function KeyOverlay() {
               initial="hidden"
               animate="visible"
               exit="hidden"
-              transition={{ layout: { duration: appearance.animationDuration / 3, ease: EASE_OUT } }}
+              transition={{ layout: { duration: appearance.animationDuration / 3, ease: easeOutQuint } }}
             >
               <Keycap
-                keyPress={keyPress}
-                isPressed={groups.length - 1 === groupIndex && pressedKeys.includes(keyPress.name)}
+                event={event}
+                lastest={group.keys.length - 1 === keyIndex}
+                isPressed={groups.length - 1 === groupIndex && event.in(pressedKeys)}
               />
             </motion.div>
           ) : (
             <Keycap
-              keyPress={keyPress}
-              isPressed={groups.length - 1 === groupIndex && pressedKeys.includes(keyPress.name)}
+              event={event}
+              lastest={group.keys.length - 1 === keyIndex}
+              isPressed={groups.length - 1 === groupIndex && event.in(pressedKeys)}
             />
           )}
         </Fragment>
@@ -173,4 +182,4 @@ export function KeyOverlay() {
       {noAnimation ? renderGroups(false) : <AnimatePresence>{renderGroups(true)}</AnimatePresence>}
     </div>
   );
-}
+};

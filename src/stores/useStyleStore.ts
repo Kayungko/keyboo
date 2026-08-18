@@ -1,5 +1,9 @@
 // 样式 store:覆盖层外观、键帽、颜色与鼠标反馈的全部配置
+// 结构与交互对齐 Keyviz 的 KeyStyleState
 
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { toast } from "sonner";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { keybooStorage } from "./persist";
@@ -11,8 +15,10 @@ export type Alignment =
   | "center-left" | "center" | "center-right"
   | "bottom-left" | "bottom-center" | "bottom-right";
 
-export type KeyStyle = "minimal" | "standard";
+export type KeycapStyle = "minimal" | "laptop" | "lowprofile" | "pbt";
 export type AnimationKind = "none" | "fade" | "zoom" | "float" | "slide";
+export type ChromaKey = "none" | "magenta" | "green";
+export type DisplayMode = "floating" | "keyboard";
 
 export interface AppearanceSettings {
   monitor: string | null;
@@ -22,19 +28,38 @@ export interface AppearanceSettings {
   marginY: number;
   animation: AnimationKind;
   animationDuration: number;
-  keyStyle: KeyStyle;
+  style: KeycapStyle;
+  chromaKey: ChromaKey;
+  displayMode: DisplayMode;
 }
 
-export interface TextSettings {
-  size: number;
-  color: string;
-  variant: "text" | "text-short";
-  caps: "uppercase" | "capitalize" | "lowercase";
+export interface LayoutSettings {
+  showIcon: boolean;
+  showSymbol: boolean;
+  showPressCount: boolean;
+  iconAlignment: "flex-start" | "center" | "flex-end";
 }
 
 export interface ColorSettings {
   color: string;
   secondaryColor: string;
+  useGradient: boolean;
+}
+
+export interface ModifierSettings {
+  highlight: boolean;
+  color: string;
+  secondaryColor: string;
+  textColor: string;
+  borderColor: string;
+}
+
+export interface TextSettings {
+  size: number;
+  color: string;
+  caps: "uppercase" | "capitalize" | "lowercase";
+  variant: "icon" | "text" | "text-short";
+  alignment: Alignment;
 }
 
 export interface BorderSettings {
@@ -49,38 +74,50 @@ export interface BackgroundSettings {
   color: string;
 }
 
-export interface MouseVisualSettings {
+export interface MouseSettings {
   showClicks: boolean;
   size: number;
   color: string;
   keepHighlight: boolean;
   showIndicator: boolean;
+  keepIndicator: boolean;
   indicatorSize: number;
-  offsetX: number;
-  offsetY: number;
+  indicatorOffsetX: number;
+  indicatorOffsetY: number;
+  showTrail: boolean;
+  trailWidth: number;
+  trailFadeMs: number;
+}
+
+export interface StyleState {
+  appearance: AppearanceSettings;
+  layout: LayoutSettings;
+  color: ColorSettings;
+  modifier: ModifierSettings;
+  text: TextSettings;
+  border: BorderSettings;
+  background: BackgroundSettings;
+  mouse: MouseSettings;
 }
 
 interface StyleActions {
-  setAppearance: (partial: Partial<AppearanceSettings>) => void;
-  setText: (partial: Partial<TextSettings>) => void;
-  setColor: (partial: Partial<ColorSettings>) => void;
-  setBorder: (partial: Partial<BorderSettings>) => void;
-  setBackground: (partial: Partial<BackgroundSettings>) => void;
-  setMouse: (partial: Partial<MouseVisualSettings>) => void;
+  setAppearance: (appearance: Partial<AppearanceSettings>) => void;
+  setLayout: (layout: Partial<LayoutSettings>) => void;
+  setColor: (color: Partial<ColorSettings>) => void;
+  setModifier: (modifier: Partial<ModifierSettings>) => void;
+  setText: (text: Partial<TextSettings>) => void;
+  setBorder: (border: Partial<BorderSettings>) => void;
+  setBackground: (background: Partial<BackgroundSettings>) => void;
+  setMouse: (mouse: Partial<MouseSettings>) => void;
+  importStyle: () => Promise<void>;
+  exportStyle: () => Promise<void>;
 }
 
-export type StyleStore = {
-  appearance: AppearanceSettings;
-  text: TextSettings;
-  color: ColorSettings;
-  border: BorderSettings;
-  background: BackgroundSettings;
-  mouse: MouseVisualSettings;
-} & StyleActions;
+export type StyleStore = StyleState & StyleActions;
 
 export const useStyleStore = create<StyleStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       appearance: {
         monitor: null,
         flexDirection: "row",
@@ -89,17 +126,34 @@ export const useStyleStore = create<StyleStore>()(
         marginY: 100,
         animation: "float",
         animationDuration: 0.25,
-        keyStyle: "standard",
+        style: "lowprofile",
+        chromaKey: "none",
+        displayMode: "floating",
       },
-      text: {
-        size: 28,
-        color: "#ffffff",
-        variant: "text-short",
-        caps: "capitalize",
+      layout: {
+        showIcon: true,
+        showSymbol: true,
+        showPressCount: true,
+        iconAlignment: "flex-end",
       },
       color: {
         color: "#ff6b6b",
         secondaryColor: "#2b2b33",
+        useGradient: true,
+      },
+      modifier: {
+        highlight: false,
+        color: "#3a86ff",
+        secondaryColor: "#232329",
+        textColor: "#ffffff",
+        borderColor: "#3a86ff",
+      },
+      text: {
+        size: 28,
+        color: "#ffffff",
+        caps: "capitalize",
+        variant: "text-short",
+        alignment: "center",
       },
       border: {
         enabled: false,
@@ -117,17 +171,80 @@ export const useStyleStore = create<StyleStore>()(
         color: "#ff6b6b",
         keepHighlight: false,
         showIndicator: true,
+        keepIndicator: true,
         indicatorSize: 44,
-        offsetX: 28,
-        offsetY: 28,
+        indicatorOffsetX: 28,
+        indicatorOffsetY: 28,
+        showTrail: false,
+        trailWidth: 6,
+        trailFadeMs: 600,
       },
 
-      setAppearance: (partial) => set((s) => ({ appearance: { ...s.appearance, ...partial } })),
-      setText: (partial) => set((s) => ({ text: { ...s.text, ...partial } })),
-      setColor: (partial) => set((s) => ({ color: { ...s.color, ...partial } })),
-      setBorder: (partial) => set((s) => ({ border: { ...s.border, ...partial } })),
-      setBackground: (partial) => set((s) => ({ background: { ...s.background, ...partial } })),
-      setMouse: (partial) => set((s) => ({ mouse: { ...s.mouse, ...partial } })),
+      setAppearance: (appearance) => set((s) => ({ appearance: { ...s.appearance, ...appearance } })),
+      setLayout: (layout) => set((s) => ({ layout: { ...s.layout, ...layout } })),
+      setColor: (color) => set((s) => ({ color: { ...s.color, ...color } })),
+      setModifier: (modifier) => set((s) => ({ modifier: { ...s.modifier, ...modifier } })),
+      setText: (text) => set((s) => ({ text: { ...s.text, ...text } })),
+      setBorder: (border) => set((s) => ({ border: { ...s.border, ...border } })),
+      setBackground: (background) => set((s) => ({ background: { ...s.background, ...background } })),
+      setMouse: (mouse) => set((s) => ({ mouse: { ...s.mouse, ...mouse } })),
+
+      // 样式导入/导出(JSON 文件)
+      importStyle: async () => {
+        try {
+          const filePath = await open({
+            multiple: false,
+            filters: [{ name: "JSON 文件", extensions: ["json"] }],
+          });
+          if (!filePath || typeof filePath !== "string") return;
+          const content = await readTextFile(filePath);
+          const parsed: StyleState = JSON.parse(content);
+          if (
+            !parsed.appearance || !parsed.layout || !parsed.color || !parsed.modifier ||
+            !parsed.text || !parsed.border || !parsed.background || !parsed.mouse
+          ) {
+            toast.warning("文件格式无效", { description: filePath });
+            return;
+          }
+          set({
+            appearance: parsed.appearance,
+            layout: parsed.layout,
+            color: parsed.color,
+            modifier: parsed.modifier,
+            text: parsed.text,
+            border: parsed.border,
+            background: parsed.background,
+            mouse: parsed.mouse,
+          });
+          toast.success("导入成功", { description: filePath });
+        } catch (err) {
+          toast.error("导入文件出错", { description: err instanceof Error ? err.message : String(err) });
+        }
+      },
+      exportStyle: async () => {
+        const state = get();
+        const data: StyleState = {
+          appearance: state.appearance,
+          layout: state.layout,
+          color: state.color,
+          modifier: state.modifier,
+          text: state.text,
+          border: state.border,
+          background: state.background,
+          mouse: state.mouse,
+        };
+        try {
+          const filePath = await save({
+            defaultPath: "keyboo_style.json",
+            filters: [{ name: "JSON 文件", extensions: ["json"] }],
+          });
+          if (!filePath) return;
+          await writeTextFile(filePath, JSON.stringify(data, null, 2));
+          toast.success("导出成功", { description: filePath });
+        } catch (err) {
+          toast.error("导出文件出错", { description: err instanceof Error ? err.message : String(err) });
+        }
+      },
     }),
     {
       name: STYLE_STORE_NAME,
@@ -137,6 +254,7 @@ export const useStyleStore = create<StyleStore>()(
 );
 
 // ─── 对齐 → flex 属性映射 ───
+
 const flexMap: Record<Alignment, Pick<React.CSSProperties, "justifyContent" | "alignItems">> = {
   "top-left": { justifyContent: "flex-start", alignItems: "flex-start" },
   "top-center": { justifyContent: "center", alignItems: "flex-start" },
@@ -149,4 +267,5 @@ const flexMap: Record<Alignment, Pick<React.CSSProperties, "justifyContent" | "a
   "bottom-right": { justifyContent: "flex-end", alignItems: "flex-end" },
 };
 
-export const alignmentFlex = (alignment: Alignment) => flexMap[alignment];
+export const alignmentForRow = flexMap;
+export const alignmentForColumn = flexMap;

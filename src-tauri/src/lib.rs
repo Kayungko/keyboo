@@ -47,6 +47,33 @@ fn set_main_window_monitor(app: tauri::AppHandle, monitor_name: Option<String>) 
     Ok(())
 }
 
+/// 设置显隐快捷键:更新内存状态并持久化到 store
+#[tauri::command]
+fn set_toggle_shortcut(app: tauri::AppHandle, shortcut: Vec<String>) -> Result<(), String> {
+    use tauri_plugin_store::StoreExt;
+
+    // 更新内存
+    {
+        let state = app.state::<Mutex<AppState>>();
+        state.lock().unwrap().toggle_shortcut = shortcut.clone();
+    }
+
+    // 持久化:合并进前端 zustand persist 的 keyboo-event-store 条目
+    let store = app.store("keyboo.json").map_err(|e| e.to_string())?;
+    let root: serde_json::Value = store
+        .get("keyboo-event-store")
+        .and_then(|v| serde_json::from_value(v).ok())
+        .unwrap_or_else(|| serde_json::json!({ "state": {}, "version": 0 }));
+    let mut root = root;
+    root["state"]["toggleShortcut"] = serde_json::json!(shortcut);
+    store.set(
+        "keyboo-event-store",
+        serde_json::to_value(root).map_err(|e| e.to_string())?,
+    );
+    store.save().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -57,7 +84,7 @@ pub fn run() {
             let app_handle = app.handle().clone();
 
             // 全局状态
-            app.manage(Mutex::new(AppState::new()));
+            app.manage(Mutex::new(AppState::new(&app_handle)));
 
             // 托盘菜单
             let toggle_item = MenuItem::with_id(app, "toggle", "暂停", true, None::<&str>)?;
@@ -138,7 +165,10 @@ pub fn run() {
                     .emit_to("main", "settings-window", false);
             }
         })
-        .invoke_handler(tauri::generate_handler![set_main_window_monitor])
+        .invoke_handler(tauri::generate_handler![
+            set_main_window_monitor,
+            set_toggle_shortcut
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Keyboo");
 }

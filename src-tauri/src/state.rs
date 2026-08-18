@@ -1,21 +1,43 @@
 //! 应用全局状态
 
 use tauri::{menu::MenuItem, AppHandle, Emitter, Wry};
+use tauri_plugin_store::StoreExt;
 
 pub struct AppState {
     /// 是否监听并显示输入事件
     pub listening: bool,
     /// 静默模式:继续收集但前端不显示(输入敏感内容时使用)
     pub silent: bool,
+    /// 显隐快捷键(键名序列,与前端 toggleShortcut 一致)
+    pub toggle_shortcut: Vec<String>,
     /// 覆盖层所在显示器的原点(物理像素),用于鼠标坐标换算
     pub monitor_position: (i32, i32),
 }
 
 impl AppState {
-    pub fn new() -> Self {
+    pub fn new(app: &AppHandle) -> Self {
+        // 默认快捷键 Shift + F10;若 store 中有用户配置则优先
+        let mut toggle_shortcut = vec!["ShiftLeft".to_string(), "F10".to_string()];
+        if let Ok(store) = app.store("keyboo.json") {
+            if let Some(value) = store.get("keyboo-event-store") {
+                if let Ok(parsed) = serde_json::from_value::<serde_json::Value>(value) {
+                    if let Some(arr) = parsed["state"]["toggleShortcut"].as_array() {
+                        let keys: Vec<String> = arr
+                            .iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect();
+                        if !keys.is_empty() {
+                            toggle_shortcut = keys;
+                        }
+                    }
+                }
+            }
+        }
+
         Self {
             listening: true,
             silent: false,
+            toggle_shortcut,
             monitor_position: (0, 0),
         }
     }

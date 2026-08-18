@@ -3,6 +3,10 @@ node_modules/
 dist/
 src-tauri/target/
 
+# 打包产物(便携版/安装包)
+*.exe
+!src-tauri/icons/**
+
 # Tauri 生成文件
 src-tauri/gen/
 

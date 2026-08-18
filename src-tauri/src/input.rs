@@ -260,14 +260,13 @@ fn start_worker_thread(app: AppHandle, rx: Receiver<RawInput>, toggle_item: Menu
     });
 }
 
-/// 显隐快捷键:Shift + F10(与设置里的 toggle 保持一致的默认值)
+/// 显隐快捷键:序列精确匹配(默认 Shift + F10,可在设置中修改)
 fn check_toggle_shortcut(app: &AppHandle, pressed_keys: &[String], toggle_item: &MenuItem<Wry>) {
-    let expected = ["ShiftLeft".to_string(), "F10".to_string()];
-    if pressed_keys != expected {
-        return;
-    }
     let state = app.state::<Mutex<AppState>>();
     let mut app_state = state.lock().unwrap();
+    if app_state.toggle_shortcut.is_empty() || pressed_keys != app_state.toggle_shortcut.as_slice() {
+        return;
+    }
     app_state.toggle_listening(app, toggle_item);
     if !app_state.listening {
         // 暂停监听:补发所有按下键的释放,避免键帽残留
