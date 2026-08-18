@@ -14,7 +14,7 @@ import { GeneralSettings } from "./settings/general";
 import { KeycapSettings } from "./settings/keycap";
 import { MouseSettings } from "./settings/mouse";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.2.1";
 
 const sideBar = [
   { id: "general", label: "常规", icon: Settings03Icon },
@@ -26,15 +26,19 @@ const sideBar = [
 export default function Settings() {
   const [activeTab, setActiveTab] = useState(sideBar[0].id);
 
-  // 设置窗口是状态写入方:把变更同步给覆盖层窗口
+  // 设置窗口是状态写入方:把变更同步给覆盖层窗口。
+  // StrictMode 下 effect 双跑,必须返回清理函数,否则订阅重复、事件双发
   useEffect(() => {
-    startSyncSender(EVENT_STORE_NAME, useEventStore, [
-      "filter", "allowedKeys", "showEventHistory", "maxHistory", "lingerDurationMs",
-      "dragThreshold", "toggleShortcut",
-    ]);
-    startSyncSender(STYLE_STORE_NAME, useStyleStore, [
-      "appearance", "layout", "color", "modifier", "text", "border", "background", "mouse",
-    ]);
+    const unsubscribers = [
+      startSyncSender(EVENT_STORE_NAME, useEventStore, [
+        "filter", "allowedKeys", "showEventHistory", "maxHistory", "lingerDurationMs",
+        "dragThreshold", "toggleShortcut",
+      ]),
+      startSyncSender(STYLE_STORE_NAME, useStyleStore, [
+        "appearance", "layout", "color", "modifier", "text", "border", "background", "mouse",
+      ]),
+    ];
+    return () => unsubscribers.forEach((un) => un());
   }, []);
 
   return (

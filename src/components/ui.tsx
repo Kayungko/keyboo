@@ -3,7 +3,7 @@
 import { cn } from "@/lib/utils";
 import type { Alignment } from "@/stores/useStyleStore";
 import { motion } from "motion/react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 // ─── 区块 ───
 
@@ -136,6 +136,18 @@ export function NumberField({ value, onChange, min, max, step = 1, disabled, cla
   className?: string;
 }) {
   const clamp = (v: number) => Math.min(max ?? Infinity, Math.max(min ?? -Infinity, v));
+  // 输入草稿:打字期间保留用户原文,不实时钳制——
+  // 否则输入中间值(如想打 100 先出现 1)会被立刻改写,无法键入
+  const [draft, setDraft] = useState<string | null>(null);
+
+  const commit = () => {
+    if (draft !== null) {
+      const v = parseFloat(draft);
+      if (!Number.isNaN(v)) onChange(clamp(v));
+    }
+    setDraft(null);
+  };
+
   return (
     <div className={cn(
       "flex h-8 items-center rounded-lg border border-input bg-background",
@@ -143,21 +155,25 @@ export function NumberField({ value, onChange, min, max, step = 1, disabled, cla
       className,
     )}>
       <button type="button" className="px-2 text-muted-foreground hover:text-foreground"
-        onClick={() => onChange(clamp(Number((value - step).toFixed(4))))}>−</button>
+        onClick={() => { setDraft(null); onChange(clamp(Number((value - step).toFixed(4)))); }}>−</button>
       <input
         type="number"
         className="w-12 bg-transparent text-center text-sm outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
-        value={Number(value.toFixed(2))}
+        value={draft ?? Number(value.toFixed(2))}
         min={min}
         max={max}
         step={step}
         onChange={(e) => {
+          setDraft(e.target.value);
+          // 范围内的合法输入实时生效(预览联动),越界值延后到失焦时钳制
           const v = parseFloat(e.target.value);
-          if (!Number.isNaN(v)) onChange(clamp(v));
+          if (!Number.isNaN(v) && v >= (min ?? -Infinity) && v <= (max ?? Infinity)) onChange(v);
         }}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
       />
       <button type="button" className="px-2 text-muted-foreground hover:text-foreground"
-        onClick={() => onChange(clamp(Number((value + step).toFixed(4))))}>+</button>
+        onClick={() => { setDraft(null); onChange(clamp(Number((value + step).toFixed(4)))); }}>+</button>
     </div>
   );
 }

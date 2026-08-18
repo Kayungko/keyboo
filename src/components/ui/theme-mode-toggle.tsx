@@ -4,11 +4,17 @@ import { useEffect, useState } from "react";
 
 type ThemeMode = "light" | "dark" | "system";
 
-const THEME_KEY = "keyboo-theme";
+export const THEME_KEY = "keyboo-theme";
 
-function applyTheme(mode: ThemeMode) {
+export function applyTheme(mode: ThemeMode) {
   const dark = mode === "dark" || (mode === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
   document.documentElement.classList.toggle("dark", dark);
+}
+
+/** 在首帧渲染前调用,避免深色模式先闪一帧浅色 */
+export function applyInitialTheme() {
+  const stored = localStorage.getItem(THEME_KEY);
+  applyTheme(stored === "light" || stored === "dark" ? stored : "system");
 }
 
 export function useThemeMode() {

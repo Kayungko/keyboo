@@ -35,7 +35,8 @@ function WheelSvg({ direction, accent }: { direction: "up" | "down"; accent: str
 }
 
 export const MouseIndicator = () => {
-  const pressedButton = useEventStore((state) => state.pressedMouseButton);
+  const pressedButtons = useEventStore((state) => state.pressedMouseButtons);
+  const pressedButton = pressedButtons.length > 0 ? pressedButtons[pressedButtons.length - 1] : null;
   const wheel = useEventStore((state) => state.mouse.wheel);
   const style = useStyleStore((state) => state.mouse);
 

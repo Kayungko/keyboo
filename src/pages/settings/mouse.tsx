@@ -13,7 +13,8 @@ export const MouseSettings = () => {
   const dragThreshold = useEventStore((state) => state.dragThreshold);
   const setDragThreshold = useEventStore((state) => state.setDragThreshold);
 
-  const [offsetLinked, setOffsetLinked] = useState(true);
+  // 初始状态跟随实际配置:X === Y 时视为联动,避免硬编码 true 覆盖用户已拆分的偏移
+  const [offsetLinked, setOffsetLinked] = useState(() => mouse.indicatorOffsetX === mouse.indicatorOffsetY);
 
   return (
     <div className="flex flex-col gap-y-4 p-6">

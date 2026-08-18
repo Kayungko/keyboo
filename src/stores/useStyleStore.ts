@@ -198,7 +198,7 @@ export const useStyleStore = create<StyleStore>()(
           });
           if (!filePath || typeof filePath !== "string") return;
           const content = await readTextFile(filePath);
-          const parsed: StyleState = JSON.parse(content);
+          const parsed: Partial<StyleState> = JSON.parse(content);
           if (
             !parsed.appearance || !parsed.layout || !parsed.color || !parsed.modifier ||
             !parsed.text || !parsed.border || !parsed.background || !parsed.mouse
@@ -206,15 +206,18 @@ export const useStyleStore = create<StyleStore>()(
             toast.warning("文件格式无效", { description: filePath });
             return;
           }
+          // 与当前配置浅合并:旧版本导出的文件缺少新增字段(如轨迹参数)时,
+          // 缺失字段保留当前值,而不是变成 undefined 引发渲染错误
+          const state = get();
           set({
-            appearance: parsed.appearance,
-            layout: parsed.layout,
-            color: parsed.color,
-            modifier: parsed.modifier,
-            text: parsed.text,
-            border: parsed.border,
-            background: parsed.background,
-            mouse: parsed.mouse,
+            appearance: { ...state.appearance, ...parsed.appearance },
+            layout: { ...state.layout, ...parsed.layout },
+            color: { ...state.color, ...parsed.color },
+            modifier: { ...state.modifier, ...parsed.modifier },
+            text: { ...state.text, ...parsed.text },
+            border: { ...state.border, ...parsed.border },
+            background: { ...state.background, ...parsed.background },
+            mouse: { ...state.mouse, ...parsed.mouse },
           });
           toast.success("导入成功", { description: filePath });
         } catch (err) {

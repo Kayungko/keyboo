@@ -22,26 +22,29 @@ export const MouseTrail = () => {
   const pointsRef = useRef<TrailPoint[]>([]);
 
   useEffect(() => {
+    // showTrail 必须在依赖里:关闭后 canvas 卸载,重开时 effect 需重建,
+    // 否则 ctx 仍指向旧 canvas,轨迹永不显示
+    if (!showTrail) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const dpr = window.devicePixelRatio || 1;
-
     const resize = () => {
+      const dpr = window.devicePixelRatio || 1;
       canvas.width = Math.round(window.innerWidth * dpr);
       canvas.height = Math.round(window.innerHeight * dpr);
     };
     resize();
     window.addEventListener("resize", resize);
 
-    // 收集轨迹点:仅在坐标变化时记录
+    // 收集轨迹点:存物理像素坐标,绘制时按实时 dpr 换算,
+    // 跨显示器/缩放变化时旧点不错位
     const unsubscribe = useEventStore.subscribe((state, prev) => {
       if (state.mouse.x === prev.mouse.x && state.mouse.y === prev.mouse.y) return;
       pointsRef.current.push({
-        x: state.mouse.x / dpr,
-        y: state.mouse.y / dpr,
+        x: state.mouse.x,
+        y: state.mouse.y,
         t: performance.now(),
       });
       if (pointsRef.current.length > MAX_TRAIL_POINTS) {
@@ -51,6 +54,7 @@ export const MouseTrail = () => {
 
     let raf = 0;
     const loop = () => {
+      const dpr = window.devicePixelRatio || 1;
       const now = performance.now();
       const fadeMs = Math.max(50, trailFadeMs);
       const points = pointsRef.current.filter((p) => now - p.t < fadeMs);
@@ -69,8 +73,8 @@ export const MouseTrail = () => {
           const age = now - points[i].t;
           ctx.globalAlpha = Math.max(0, 1 - age / fadeMs) * 0.6;
           ctx.beginPath();
-          ctx.moveTo(points[i - 1].x, points[i - 1].y);
-          ctx.lineTo(points[i].x, points[i].y);
+          ctx.moveTo(points[i - 1].x / dpr, points[i - 1].y / dpr);
+          ctx.lineTo(points[i].x / dpr, points[i].y / dpr);
           ctx.stroke();
         }
         ctx.globalAlpha = 1;
@@ -86,7 +90,7 @@ export const MouseTrail = () => {
       window.removeEventListener("resize", resize);
       pointsRef.current = [];
     };
-  }, [trailColor, trailWidth, trailFadeMs]);
+  }, [showTrail, trailColor, trailWidth, trailFadeMs]);
 
   if (!showTrail) return null;
 

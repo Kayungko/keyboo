@@ -108,7 +108,7 @@ const LayoutKey = ({ name, width, pressed, unit, fontSize, colors, textTransform
 
 export const KeyboardLayout = () => {
   const pressedKeys = useEventStore((state) => state.pressedKeys);
-  const pressedMouseButton = useEventStore((state) => state.pressedMouseButton);
+  const pressedMouseButtons = useEventStore((state) => state.pressedMouseButtons);
   const wheel = useEventStore((state) => state.mouse.wheel);
   const dragging = useEventStore((state) => state.mouse.dragging);
 
@@ -130,8 +130,8 @@ export const KeyboardLayout = () => {
 
   const isKeyPressed = (name: string) => {
     if (pressedKeys.includes(name)) return true;
-    // 鼠标虚拟键状态
-    if (name === pressedMouseButton) return true;
+    // 鼠标虚拟键状态:拖拽中鼠标键已被 Drag 取代,不再重复高亮
+    if (!dragging && pressedMouseButtons.includes(name)) return true;
     if (name === RawKey.ScrollUp && wheel > 0) return true;
     if (name === RawKey.ScrollDown && wheel < 0) return true;
     if (name === RawKey.Drag && dragging) return true;

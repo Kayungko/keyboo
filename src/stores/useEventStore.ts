@@ -8,7 +8,9 @@ import { keybooStorage } from "./persist";
 
 export const EVENT_STORE_NAME = "keyboo-event-store";
 
-// 按住超过此时长未释放视为卡键(切换到安全桌面时 release 永远收不到),自动补发释放
+// 按住超过此时长未释放视为卡键(切换到安全桌面时 release 永远收不到),自动补发释放。
+// 后端每 10s 会对仍按住的键重发 press(保活),onKeyPress 对重复按下只刷新时间戳,
+// 因此真实长按不会被误清,这里只兜底"release 彻底丢失"的极端场景。
 const STUCK_KEY_TIMEOUT_MS = 30_000;
 // 滚轮指示的停留时长
 const SCROLL_LINGER_MS = 300;
@@ -37,7 +39,7 @@ interface EventConfig {
 interface EventRuntime {
   pressedKeys: string[];
   pressedKeyTimes: Record<string, number>;
-  pressedMouseButton: string | null;
+  pressedMouseButtons: string[];
   mouse: MouseState;
   groups: KeyGroup[];
   settingsOpen: boolean;
@@ -59,6 +61,7 @@ interface EventActions {
   onMouseButtonPress: (event: MouseButtonEvent) => void;
   onMouseButtonRelease: (event: MouseButtonEvent) => void;
   onMouseWheel: (event: MouseWheelEvent) => void;
+  resetRuntime: () => void;
   tick: () => void;
 }
 
@@ -79,7 +82,7 @@ export const useEventStore = create<EventStore>()(
       // ─── 运行时 ───
       pressedKeys: [],
       pressedKeyTimes: {},
-      pressedMouseButton: null,
+      pressedMouseButtons: [],
       mouse: { x: 0, y: 0, wheel: 0, dragging: false },
       groups: [],
       settingsOpen: false,
@@ -114,12 +117,18 @@ export const useEventStore = create<EventStore>()(
 
       onKeyPress: (event) => {
         const state = get();
-        // 0. 记录物理状态
-        const pressedKeys = [...state.pressedKeys];
-        pressedKeys.push(event.name);
+        // 0. 后端保活重发 / 重复按下:只刷新时间戳,不重复入组。
+        //    这也是长按不被卡键清理误释放的关键。
+        if (state.pressedKeys.includes(event.name)) {
+          set({ pressedKeyTimes: { ...state.pressedKeyTimes, [event.name]: Date.now() } });
+          return;
+        }
+
+        // 1. 记录物理状态
+        const pressedKeys = [...state.pressedKeys, event.name];
         const pressedKeyTimes = { ...state.pressedKeyTimes, [event.name]: Date.now() };
 
-        // 1. 过滤
+        // 2. 过滤(被过滤的键保留物理状态,但不进入任何显示组)
         if (state.filter !== "none" && state.ignoreEvent(pressedKeys)) {
           set({ pressedKeys, pressedKeyTimes });
           return;
@@ -129,20 +138,27 @@ export const useEventStore = create<EventStore>()(
         const last = groups.length - 1;
         const key = new KeyEvent(event.name);
 
-        // 2. 重复按下(组合键内已有该键)
-        const existingKey = last >= 0 ? groups[last].keys.find((k) => k.name === key.name) : undefined;
+        // 上一组中"仍按住"的键数。被过滤的键不在任何组里,
+        // 因此不会把后续按键错误地吸入旧组(幽灵组合修复)。
+        const lastGroup = last >= 0 ? groups[last] : undefined;
+        const lastHeldCount = lastGroup
+          ? lastGroup.keys.filter((k) => k.in(pressedKeys)).length
+          : 0;
+
+        // 3. 重复按下(组合键内已有该键,如 linger 期间再按)
+        const existingKey = lastGroup?.keys.find((k) => k.name === key.name);
         if (existingKey) {
-          if (state.showEventHistory && groups[last].keys.length > 1) {
+          if (state.showEventHistory && lastGroup!.keys.length > 1) {
             // 历史模式:把仍按住的键拆成新组
             const groupKeys: KeyEvent[] = [];
-            groups[last].keys.forEach((k) => {
+            lastGroup!.keys.forEach((k) => {
               if (k.in(pressedKeys)) groupKeys.push(new KeyEvent(k.name));
             });
             groups.push({ keys: groupKeys, createdAt: Date.now() });
           } else {
             // 替换模式:只保留仍按住的键,并刷新该键计数
             const groupKeys: KeyEvent[] = [];
-            groups[last].keys.forEach((k) => {
+            lastGroup!.keys.forEach((k) => {
               if (k.name === key.name) {
                 existingKey.press();
                 groupKeys.push(existingKey);
@@ -150,28 +166,28 @@ export const useEventStore = create<EventStore>()(
                 groupKeys.push(k);
               }
             });
-            groups[last].keys = groupKeys;
+            lastGroup!.keys = groupKeys;
           }
         }
-        // 3. 新键入组
+        // 4. 新键入组
         else {
           const createdAt = Date.now();
-          if (pressedKeys.length === 1 || last < 0) {
-            // 单键:历史模式追加新组,替换模式重置
+          if (!lastGroup || lastHeldCount === 0) {
+            // 新组合起点:历史模式追加新组,替换模式重置
             if (state.showEventHistory) {
               groups.push({ keys: [key], createdAt });
             } else {
               groups = [{ keys: [key], createdAt }];
             }
           } else {
-            // 组合键
-            if (state.showEventHistory && groups[last].keys.some((k) => !k.in(pressedKeys))) {
+            // 组合键延续
+            if (state.showEventHistory && lastGroup.keys.some((k) => !k.in(pressedKeys))) {
               // 历史模式且上一组已有松开键:带仍按住的键开新组
-              const groupKeys = groups[last].keys.filter((k) => k.in(pressedKeys));
+              const groupKeys = lastGroup.keys.filter((k) => k.in(pressedKeys));
               groupKeys.push(key);
               groups.push({ keys: groupKeys, createdAt });
             } else {
-              groups[last].keys.push(key);
+              lastGroup.keys.push(key);
             }
           }
         }
@@ -186,10 +202,13 @@ export const useEventStore = create<EventStore>()(
 
       ignoreEvent: (pressedKeys) => {
         const state = get();
+        // 语义:只要当前按住的键里有任何一个通过过滤,就不忽略。
+        // 例如 modifiers 模式先按字母再按 Ctrl,Ctrl 仍会显示;
+        // 而单按字母(无修饰键)依旧被过滤。
         if (state.filter === "modifiers") {
-          return !MODIFIERS.has(pressedKeys[0]);
+          return !pressedKeys.some((k) => MODIFIERS.has(k));
         } else if (state.filter === "custom") {
-          return !state.allowedKeys.includes(pressedKeys[0]);
+          return !pressedKeys.some((k) => state.allowedKeys.includes(k));
         }
         return false;
       },
@@ -200,12 +219,19 @@ export const useEventStore = create<EventStore>()(
         const pressedKeyTimes = { ...state.pressedKeyTimes };
         delete pressedKeyTimes[event.name];
 
-        // 刷新组内该键的释放时刻(linger 从释放开始计时)
+        // 刷新组内该键的释放时刻(linger 从释放开始计时)。
+        // 历史模式下同名键可能出现在较早的组,从后往前找第一个命中组。
         const groups = [...state.groups];
-        const last = groups.length - 1;
-        const kIndex = last >= 0 ? groups[last].keys.findIndex((k) => k.name === event.name) : undefined;
-        if (kIndex !== undefined && kIndex >= 0) {
-          groups[last].keys[kIndex].lastPressedAt = Date.now();
+        let updated = false;
+        for (let i = groups.length - 1; i >= 0; i--) {
+          const kIndex = groups[i].keys.findIndex((k) => k.name === event.name);
+          if (kIndex >= 0) {
+            groups[i].keys[kIndex].lastPressedAt = Date.now();
+            updated = true;
+            break;
+          }
+        }
+        if (updated) {
           set({ pressedKeys, pressedKeyTimes, groups });
         } else {
           set({ pressedKeys, pressedKeyTimes });
@@ -216,26 +242,26 @@ export const useEventStore = create<EventStore>()(
         const state = get();
         const mouse = { ...state.mouse, x: event.x, y: event.y };
 
-        // 拖拽判定:按住鼠标键且移动超过阈值 → 模拟 Drag 键
-        if (mouse.dragStart && !mouse.dragging) {
+        // 拖拽判定:按住任一鼠标键且移动超过阈值 → 模拟 Drag 键
+        if (mouse.dragStart && !mouse.dragging && state.pressedMouseButtons.length > 0) {
           const dist = Math.hypot(mouse.x - mouse.dragStart.x, mouse.y - mouse.dragStart.y);
           if (dist > state.dragThreshold) {
             mouse.dragging = true;
 
-            // 从按下键列表与最后一组中移除鼠标按键,换成 Drag
-            const pressedKeys = state.pressedKeys.filter((name) => name !== state.pressedMouseButton);
+            // 从按下键列表与最后一组中移除所有鼠标按键,换成 Drag
+            const mouseButtons = new Set(state.pressedMouseButtons);
+            const pressedKeys = state.pressedKeys.filter((name) => !mouseButtons.has(name));
             const groups = [...state.groups];
             const last = groups.length - 1;
             if (last >= 0) {
-              groups[last].keys = groups[last].keys.filter((k) => k.name !== state.pressedMouseButton);
+              groups[last].keys = groups[last].keys.filter((k) => !mouseButtons.has(k.name));
             }
             set({ pressedKeys, mouse, groups });
 
             const hasGroupKeys = last >= 0 && groups[last].keys.length > 0;
             const dragAllowed =
               state.filter !== "custom" ||
-              (!!state.pressedMouseButton &&
-                state.allowedKeys.includes(state.pressedMouseButton) &&
+              (state.pressedMouseButtons.some((b) => state.allowedKeys.includes(b)) &&
                 state.allowedKeys.includes(RawKey.Drag));
 
             if (hasGroupKeys || dragAllowed) {
@@ -249,20 +275,33 @@ export const useEventStore = create<EventStore>()(
 
       onMouseButtonPress: (event) => {
         const state = get();
-        const mouse = { ...state.mouse, dragStart: { x: state.mouse.x, y: state.mouse.y } };
+        const pressedMouseButtons = state.pressedMouseButtons.includes(event.button)
+          ? state.pressedMouseButtons
+          : [...state.pressedMouseButtons, event.button];
+        const mouse = { ...state.mouse };
+        if (!mouse.dragging) {
+          mouse.dragStart = { x: state.mouse.x, y: state.mouse.y };
+        }
         state.onKeyPress({ type: "KeyEvent", name: event.button, pressed: true });
-        set({ pressedMouseButton: event.button, mouse });
+        set({ pressedMouseButtons, mouse });
       },
 
       onMouseButtonRelease: (event) => {
         const state = get();
-        const mouse = { ...state.mouse, dragging: false, dragStart: undefined };
+        const pressedMouseButtons = state.pressedMouseButtons.filter((b) => b !== event.button);
+        const mouse = { ...state.mouse };
         if (state.mouse.dragging) {
-          state.onKeyRelease({ type: "KeyEvent", name: RawKey.Drag, pressed: false });
+          // 全部鼠标键松开才结束拖拽;仍有按键则继续拖
+          if (pressedMouseButtons.length === 0) {
+            mouse.dragging = false;
+            mouse.dragStart = undefined;
+            state.onKeyRelease({ type: "KeyEvent", name: RawKey.Drag, pressed: false });
+          }
         } else {
+          mouse.dragStart = pressedMouseButtons.length > 0 ? mouse.dragStart : undefined;
           state.onKeyRelease({ type: "KeyEvent", name: event.button, pressed: false });
         }
-        set({ pressedMouseButton: null, mouse });
+        set({ pressedMouseButtons, mouse });
       },
 
       onMouseWheel: (event) => {
@@ -283,36 +322,49 @@ export const useEventStore = create<EventStore>()(
         set({ mouse });
       },
 
-      tick: () => {
-        const state = get();
-        const now = Date.now();
-        let notify = false;
+      // 暂停/静默时清空运行时状态,避免键帽、圆环、拖拽残留
+      resetRuntime: () => {
+        set({
+          pressedKeys: [],
+          pressedKeyTimes: {},
+          pressedMouseButtons: [],
+          mouse: { x: 0, y: 0, wheel: 0, dragging: false },
+          groups: [],
+        });
+      },
 
-        // 卡键清理:安全桌面等场景丢失 release 事件
-        for (const name of [...state.pressedKeys]) {
-          const pressedAt = state.pressedKeyTimes[name];
+      tick: () => {
+        const now = Date.now();
+
+        // 卡键清理:安全桌面等场景丢失 release 事件。
+        // 每步都取最新快照,避免清理过程中状态变化导致新旧混用。
+        for (const name of [...get().pressedKeys]) {
+          const pressedAt = get().pressedKeyTimes[name];
           if (pressedAt !== undefined && now - pressedAt > STUCK_KEY_TIMEOUT_MS) {
-            state.onKeyRelease({ type: "KeyEvent", name, pressed: false });
+            get().onKeyRelease({ type: "KeyEvent", name, pressed: false });
           }
         }
 
         // 滚轮停留到期
-        if (state.mouse.lastScrollAt && now - state.mouse.lastScrollAt > SCROLL_LINGER_MS) {
-          if (state.pressedKeys.includes(RawKey.ScrollUp)) {
-            state.onKeyRelease({ type: "KeyEvent", name: RawKey.ScrollUp, pressed: false });
+        const mouseNow = get().mouse;
+        if (mouseNow.lastScrollAt && now - mouseNow.lastScrollAt > SCROLL_LINGER_MS) {
+          if (get().pressedKeys.includes(RawKey.ScrollUp)) {
+            get().onKeyRelease({ type: "KeyEvent", name: RawKey.ScrollUp, pressed: false });
           }
-          if (state.pressedKeys.includes(RawKey.ScrollDown)) {
-            state.onKeyRelease({ type: "KeyEvent", name: RawKey.ScrollDown, pressed: false });
+          if (get().pressedKeys.includes(RawKey.ScrollDown)) {
+            get().onKeyRelease({ type: "KeyEvent", name: RawKey.ScrollDown, pressed: false });
           }
           set({ mouse: { ...get().mouse, wheel: 0, lastScrollAt: undefined } });
         }
 
         // 设置窗口打开时不移除键帽,方便预览
-        if (state.settingsOpen) return;
+        if (get().settingsOpen) return;
 
         // linger 到期移除
+        const state = get();
+        let notify = false;
         const groups: KeyGroup[] = [];
-        for (const group of get().groups) {
+        for (const group of state.groups) {
           const kept = group.keys.filter(
             (key) =>
               state.pressedKeys.includes(key.name) ||
@@ -328,7 +380,7 @@ export const useEventStore = create<EventStore>()(
       name: EVENT_STORE_NAME,
       storage: keybooStorage,
       partialize: (state) => {
-        const { pressedKeys, pressedKeyTimes, pressedMouseButton, mouse, groups, settingsOpen, ...persisted } = state;
+        const { pressedKeys, pressedKeyTimes, pressedMouseButtons, mouse, groups, settingsOpen, ...persisted } = state;
         return persisted;
       },
     },

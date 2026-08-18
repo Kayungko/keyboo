@@ -27,6 +27,9 @@ const MOUSE_MOVE_EMIT_INTERVAL: Duration = Duration::from_millis(8);
 const WORKER_RECV_TIMEOUT: Duration = Duration::from_millis(16);
 /// 低级钩子扩展键标志(如右侧 Ctrl/Alt、小键盘 Enter)
 const LLKHF_EXTENDED: u32 = 0x0000_0001;
+/// 长按保活间隔:周期性重发按下事件,让前端刷新时间戳,
+/// 避免长时间按住(如录屏时按住 Shift)被卡键清理误释放
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
 
 static EVENT_TX: OnceLock<SyncSender<RawInput>> = OnceLock::new();
 
@@ -202,6 +205,7 @@ fn start_worker_thread(app: AppHandle, rx: Receiver<RawInput>, toggle_item: Menu
         let mut last_move_emit = Instant::now() - MOUSE_MOVE_EMIT_INTERVAL;
         // 物理按下键列表(用于显隐快捷键匹配)
         let mut pressed_keys: Vec<String> = Vec::new();
+        let mut last_keepalive = Instant::now();
 
         loop {
             let raw = match rx.recv_timeout(WORKER_RECV_TIMEOUT) {
@@ -226,6 +230,17 @@ fn start_worker_thread(app: AppHandle, rx: Receiver<RawInput>, toggle_item: Menu
                 if let Some((x, y)) = pending_move.take() {
                     emit_mouse_move(&app, x, y);
                     last_move_emit = Instant::now();
+                }
+            }
+
+            // 长按保活:重发按下事件只用于刷新前端时间戳(前端对重复按下仅更新时间)
+            if last_keepalive.elapsed() >= KEEPALIVE_INTERVAL {
+                last_keepalive = Instant::now();
+                for key in pressed_keys.clone() {
+                    emit_input_event(
+                        &app,
+                        InputEvent::KeyEvent { pressed: true, name: key },
+                    );
                 }
             }
 
@@ -260,41 +275,89 @@ fn start_worker_thread(app: AppHandle, rx: Receiver<RawInput>, toggle_item: Menu
     });
 }
 
-/// 显隐快捷键:序列精确匹配(默认 Shift + F10,可在设置中修改)
+/// 显隐快捷键:集合匹配(顺序无关、左右修饰键归一),默认 Shift + F10,可在设置中修改
 fn check_toggle_shortcut(app: &AppHandle, pressed_keys: &[String], toggle_item: &MenuItem<Wry>) {
-    let state = app.state::<Mutex<AppState>>();
-    let mut app_state = state.lock().unwrap();
-    if app_state.toggle_shortcut.is_empty() || pressed_keys != app_state.toggle_shortcut.as_slice() {
+    // 先判定是否命中,立即释放锁——std::sync::Mutex 不可重入,
+    // 绝不能持锁调用 toggle_listening / emit(内部会再次 emit 或加锁)
+    let should_toggle = {
+        let state = app.state::<Mutex<AppState>>();
+        let app_state = state.lock().unwrap();
+        !app_state.toggle_shortcut.is_empty()
+            && shortcut_matches(&app_state.toggle_shortcut, pressed_keys)
+    };
+    if !should_toggle {
         return;
     }
-    app_state.toggle_listening(app, toggle_item);
-    if !app_state.listening {
-        // 暂停监听:补发所有按下键的释放,避免键帽残留
+
+    let listening_after = {
+        let state = app.state::<Mutex<AppState>>();
+        let mut app_state = state.lock().unwrap();
+        app_state.toggle_listening(app, toggle_item);
+        app_state.listening
+    };
+
+    if !listening_after {
+        // 暂停监听:绕过监听闸门,直接补发所有按下键的释放,避免键帽残留
         for key in pressed_keys.iter() {
-            emit_input_event(
-                app,
+            let _ = app.emit_to(
+                "main",
+                "input-event",
                 InputEvent::KeyEvent { pressed: false, name: key.clone() },
             );
         }
     }
 }
 
+/// 左右修饰键归一化:录制器记录的是实际按下的左/右键名,
+/// 匹配时归一,左 Ctrl 与右 Ctrl 都能命中 Ctrl
+fn normalize_key(name: &str) -> String {
+    match name {
+        "ShiftLeft" | "ShiftRight" => "Shift".to_string(),
+        "ControlLeft" | "ControlRight" => "Control".to_string(),
+        "Alt" | "AltRight" => "Alt".to_string(),
+        "MetaLeft" | "MetaRight" => "Meta".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn shortcut_matches(shortcut: &[String], pressed: &[String]) -> bool {
+    if shortcut.len() != pressed.len() {
+        return false;
+    }
+    let mut want: Vec<String> = shortcut.iter().map(|s| normalize_key(s)).collect();
+    let mut got: Vec<String> = pressed.iter().map(|s| normalize_key(s)).collect();
+    want.sort();
+    got.sort();
+    want == got
+}
+
 fn emit_mouse_move(app: &AppHandle, x: i32, y: i32) {
-    let state = app.state::<Mutex<AppState>>();
-    let app_state = state.lock().unwrap();
-    if !app_state.listening {
+    // 先拷贝 listening 与显示器原点并释放锁,再 emit,避免持锁派发
+    let (listening, origin_x, origin_y) = {
+        let state = app.state::<Mutex<AppState>>();
+        let app_state = state.lock().unwrap();
+        (
+            app_state.listening,
+            app_state.monitor_position.0,
+            app_state.monitor_position.1,
+        )
+    };
+    if !listening {
         return;
     }
-    let (origin_x, origin_y) = app_state.monitor_position;
-    emit_input_event(
-        app,
+    if let Err(e) = app.emit_to(
+        "main",
+        "input-event",
         InputEvent::MouseMoveEvent {
             x: (x - origin_x) as f64,
             y: (y - origin_y) as f64,
         },
-    );
+    ) {
+        eprintln!("[keyboo] emit failed: {e}");
+    }
 }
 
+/// 注意:调用方不得持有 AppState 锁(std::sync::Mutex 不可重入)
 fn emit_input_event(app: &AppHandle, event: InputEvent) {
     let state = app.state::<Mutex<AppState>>();
     let listening = state.lock().unwrap().listening;

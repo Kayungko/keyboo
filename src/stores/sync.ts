@@ -9,13 +9,13 @@ interface SyncPayload {
   value: unknown;
 }
 
-/** 设置窗口:把顶层状态键的变更广播给覆盖层窗口 */
+/** 设置窗口:把顶层状态键的变更广播给覆盖层窗口。返回取消订阅函数。 */
 export function startSyncSender(
   storeName: string,
   useStore: UseBoundStore<StoreApi<any>>,
   stateKeys: string[],
 ) {
-  useStore.subscribe((state, prev) => {
+  return useStore.subscribe((state, prev) => {
     for (const key of stateKeys) {
       if (state[key] !== prev[key]) {
         void emit(SYNC_CHANNEL, { store: storeName, key, value: state[key] } satisfies SyncPayload);

@@ -16,19 +16,15 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(app: &AppHandle) -> Self {
-        // 默认快捷键 Shift + F10;若 store 中有用户配置则优先
+        // 默认快捷键 Shift + F10;若 store 中有用户配置则优先。
+        // 读 Rust 独占条目 keyboo-toggle-shortcut(数组),
+        // 不碰前端的 keyboo-event-store(JSON 字符串,格式不同)。
         let mut toggle_shortcut = vec!["ShiftLeft".to_string(), "F10".to_string()];
         if let Ok(store) = app.store("keyboo.json") {
-            if let Some(value) = store.get("keyboo-event-store") {
-                if let Ok(parsed) = serde_json::from_value::<serde_json::Value>(value) {
-                    if let Some(arr) = parsed["state"]["toggleShortcut"].as_array() {
-                        let keys: Vec<String> = arr
-                            .iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect();
-                        if !keys.is_empty() {
-                            toggle_shortcut = keys;
-                        }
+            if let Some(value) = store.get("keyboo-toggle-shortcut") {
+                if let Ok(keys) = serde_json::from_value::<Vec<String>>(value) {
+                    if !keys.is_empty() {
+                        toggle_shortcut = keys;
                     }
                 }
             }

@@ -46,15 +46,17 @@ export function Visualization() {
       listen<boolean>("settings-window", (event) => {
         useEventStore.setState({ settingsOpen: event.payload });
       }),
-      // 监听开关(托盘 + 全局快捷键)
+      // 监听开关(托盘 + 全局快捷键):暂停时清空运行时状态,避免键帽残留
       listen<boolean>("listening-toggle", (event) => {
         setListening(event.payload);
+        if (!event.payload) useEventStore.getState().resetRuntime();
         showBadge(event.payload ? "已恢复监听" : "已暂停监听");
       }),
-      // 静默模式
+      // 静默模式:进入静默同样清空运行时状态
       listen<boolean>("silent-toggle", (event) => {
         silentRef.current = event.payload;
         setSilent(event.payload);
+        if (event.payload) useEventStore.getState().resetRuntime();
         showBadge(event.payload ? "静默模式已开启" : "静默模式已关闭");
       }),
       // 双窗口状态同步

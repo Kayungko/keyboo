@@ -5,15 +5,13 @@ import { keymaps } from "@/lib/keymaps";
 import { RawKey } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/stores/useEventStore";
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { ToggleGroup, ToggleGroupItem } from "./toggle-group";
 
 interface KeyboardContextType {
   isCtrlHeld: boolean;
-  hoveredKey: string | undefined;
   hoveredCategory: string | undefined;
   setHoveredKey: (key: string | undefined) => void;
-  setHoveredCategory: (category: string | undefined) => void;
 }
 
 const KeyboardContext = createContext<KeyboardContextType | null>(null);
@@ -90,37 +88,32 @@ export const CustomFilter = () => {
   const [activeTab, setActiveTab] = useState<"keyboard" | "mouse" | "numpad">("keyboard");
   const [isCtrlHeld, setIsCtrlHeld] = useState(false);
   const [hoveredKey, setHoveredKey] = useState<string | undefined>(undefined);
-  const [hoveredCategory, setHoveredCategory] = useState<string | undefined>(undefined);
-  const hoveredKeyRef = useRef<string | undefined>(undefined);
+
+  // 高亮分组直接由当前悬停键派生:按住 Ctrl 时悬停移动会实时更新,
+  // 而不是只在按下 Ctrl 的瞬间定格一次
+  const hoveredCategory = hoveredKey ? keymaps[hoveredKey]?.category : undefined;
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!e.repeat && e.key === "Control") {
-        setIsCtrlHeld(true);
-        const currentHoveredKey = hoveredKeyRef.current;
-        setHoveredCategory(currentHoveredKey ? keymaps[currentHoveredKey]?.category : undefined);
-      }
+      if (!e.repeat && e.key === "Control") setIsCtrlHeld(true);
     };
     const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === "Control") {
-        setIsCtrlHeld(false);
-        setHoveredCategory(undefined);
-      }
+      if (e.key === "Control") setIsCtrlHeld(false);
     };
+    // 窗口失焦时 keyup 收不到(如 Alt+Tab),重置避免 Ctrl 高亮卡死
+    const handleBlur = () => setIsCtrlHeld(false);
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", handleBlur);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", handleBlur);
     };
   }, []);
 
-  useEffect(() => {
-    hoveredKeyRef.current = hoveredKey;
-  }, [hoveredKey]);
-
   return (
-    <KeyboardContext.Provider value={{ isCtrlHeld, hoveredKey, hoveredCategory, setHoveredKey, setHoveredCategory }}>
+    <KeyboardContext.Provider value={{ isCtrlHeld, hoveredCategory, setHoveredKey }}>
       <div className="flex w-full flex-col items-center justify-center gap-4">
         {activeTab === "keyboard" && (
           <div className="flex w-full max-w-196 flex-col gap-2 rounded-2xl bg-muted p-3">

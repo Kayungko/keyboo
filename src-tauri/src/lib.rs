@@ -78,18 +78,11 @@ fn set_toggle_shortcut(app: tauri::AppHandle, shortcut: Vec<String>) -> Result<(
         state.lock().unwrap().toggle_shortcut = shortcut.clone();
     }
 
-    // 持久化:合并进前端 zustand persist 的 keyboo-event-store 条目
+    // 持久化到 Rust 独占的条目。
+    // 绝不读写 keyboo-event-store:那是前端 zustand persist 的条目,
+    // 存储格式是 JSON 字符串(不是对象),按对象索引会 panic。
     let store = app.store("keyboo.json").map_err(|e| e.to_string())?;
-    let root: serde_json::Value = store
-        .get("keyboo-event-store")
-        .and_then(|v| serde_json::from_value(v).ok())
-        .unwrap_or_else(|| serde_json::json!({ "state": {}, "version": 0 }));
-    let mut root = root;
-    root["state"]["toggleShortcut"] = serde_json::json!(shortcut);
-    store.set(
-        "keyboo-event-store",
-        serde_json::to_value(root).map_err(|e| e.to_string())?,
-    );
+    store.set("keyboo-toggle-shortcut", serde_json::json!(shortcut));
     store.save().map_err(|e| e.to_string())?;
     Ok(())
 }

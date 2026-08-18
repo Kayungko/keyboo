@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { useStyleStore, type Alignment, type KeycapStyle } from "@/stores/useStyleStore";
 import { AlignHorizontalCenterIcon, AlignLeftIcon, AlignRightIcon, Download01Icon, PaintBoardIcon, Refresh01Icon, Upload01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useEffect, useRef, useState } from "react";
 
 export interface KeycapTheme {
   name: string;
@@ -51,6 +52,21 @@ export const KeycapSettings = () => {
   const setBackgroundStyle = useStyleStore((state) => state.setBackground);
   const importStyle = useStyleStore((state) => state.importStyle);
   const exportStyle = useStyleStore((state) => state.exportStyle);
+
+  // 配色下拉:受控弹层(<details> 选中后不会自动关闭,改手动控制)
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const paletteRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!paletteOpen) return;
+    const onClickOutside = (e: MouseEvent) => {
+      if (paletteRef.current && !paletteRef.current.contains(e.target as Node)) {
+        setPaletteOpen(false);
+      }
+    };
+    window.addEventListener("click", onClickOutside);
+    return () => window.removeEventListener("click", onClickOutside);
+  }, [paletteOpen]);
 
   const onStyleChange = (value: KeycapStyle) => {
     if (value === "minimal") {
@@ -105,11 +121,16 @@ export const KeycapSettings = () => {
             onChange={onStyleChange}
           />
           {/* 配色方案 */}
-          <div className="relative">
-            <details className="group">
-              <summary className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg border border-input bg-background hover:bg-accent">
-                <HugeiconsIcon icon={PaintBoardIcon} />
-              </summary>
+          <div className="relative" ref={paletteRef}>
+            <button
+              type="button"
+              onClick={() => setPaletteOpen((open) => !open)}
+              className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg border border-input bg-background hover:bg-accent"
+              aria-label="配色方案"
+            >
+              <HugeiconsIcon icon={PaintBoardIcon} />
+            </button>
+            {paletteOpen && (
               <div className="absolute right-0 z-30 mt-1 max-h-64 w-44 overflow-y-auto rounded-lg border border-border bg-background p-1 shadow-lg">
                 {colorSchemes.map((scheme) => (
                   <button
@@ -119,6 +140,7 @@ export const KeycapSettings = () => {
                       setColorStyle({ color: scheme.primary, secondaryColor: scheme.secondary });
                       setBorderStyle({ color: scheme.secondary });
                       setTextStyle({ color: scheme.text });
+                      setPaletteOpen(false);
                     }}
                     className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-secondary"
                   >
@@ -132,7 +154,7 @@ export const KeycapSettings = () => {
                   </button>
                 ))}
               </div>
-            </details>
+            )}
           </div>
           <Button variant="ghost" size="icon" onClick={randomizeStyle}>
             <HugeiconsIcon icon={Refresh01Icon} />

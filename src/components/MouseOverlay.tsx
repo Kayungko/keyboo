@@ -16,7 +16,8 @@ interface Ripple {
 }
 
 export function MouseOverlay() {
-  const pressedButton = useEventStore((s) => s.pressedMouseButton);
+  const pressedButtons = useEventStore((s) => s.pressedMouseButtons);
+  const pressedButton = pressedButtons.length > 0 ? pressedButtons[pressedButtons.length - 1] : null;
   const wheel = useEventStore((s) => s.mouse.wheel);
   const style = useStyleStore((s) => s.mouse);
   const animationDuration = useStyleStore((s) => s.appearance.animationDuration);
@@ -28,55 +29,74 @@ export function MouseOverlay() {
   const timeoutRef = useRef<number | null>(null);
   const pressAtRef = useRef<number | null>(null);
   const lastButtonRef = useRef<string | null>(null);
+  const prevPressedRef = useRef<string | null>(null);
 
-  // 按下立即显示;释放时补发涟漪,并保证圆环至少显示 MIN_CLICK_DISPLAY_MS
+  // 按下立即显示;释放时补发涟漪,并保证圆环至少显示 MIN_CLICK_DISPLAY_MS。
+  // 用 ref 跟踪上一次按下值,依赖数组只留 pressedButton → 涟漪发射幂等,
+  // 不会因 show/showClicks 变化引起 effect 重跑而重复发射。
   useEffect(() => {
+    const prev = prevPressedRef.current;
+    prevPressedRef.current = pressedButton;
+
     if (pressedButton) {
-      setShow(true);
-      pressAtRef.current = Date.now();
-      lastButtonRef.current = pressedButton;
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
+      if (prev !== pressedButton) {
+        setShow(true);
+        pressAtRef.current = Date.now();
+        lastButtonRef.current = pressedButton;
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+          timeoutRef.current = null;
+        }
       }
-    } else if (show && pressAtRef.current) {
-      if (style.showClicks) {
-        setRipples((rs) => [...rs, { id: Date.now() + Math.random(), button: lastButtonRef.current }]);
-      }
-      const elapsed = Date.now() - pressAtRef.current;
-      if (elapsed >= MIN_CLICK_DISPLAY_MS) {
+      return;
+    }
+    if (!prev || !pressAtRef.current) return;
+
+    // 释放
+    if (style.showClicks) {
+      setRipples((rs) => [...rs, { id: Date.now() + Math.random(), button: lastButtonRef.current }]);
+    }
+    const elapsed = Date.now() - pressAtRef.current;
+    if (elapsed >= MIN_CLICK_DISPLAY_MS) {
+      setShow(false);
+      pressAtRef.current = null;
+    } else {
+      timeoutRef.current = window.setTimeout(() => {
         setShow(false);
         pressAtRef.current = null;
-      } else {
-        timeoutRef.current = window.setTimeout(() => {
-          setShow(false);
-          pressAtRef.current = null;
-          timeoutRef.current = null;
-        }, MIN_CLICK_DISPLAY_MS - elapsed);
-      }
+        timeoutRef.current = null;
+      }, MIN_CLICK_DISPLAY_MS - elapsed);
     }
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, [pressedButton, show, style.showClicks]);
+  }, [pressedButton, style.showClicks]);
 
-  // 订阅鼠标坐标,直写 DOM transform,避免高频 React 重渲染
-  useEffect(() => {
-    if (!positionRef.current) return;
-    const unsubscribe = useEventStore.subscribe((state, prev) => {
-      const el = positionRef.current;
-      if (!el) return;
-      if (state.mouse.x === prev.mouse.x && state.mouse.y === prev.mouse.y) return;
-      const shouldFollow =
-        style.keepHighlight || state.pressedMouseButton || style.showIndicator || style.keepIndicator;
-      if (!shouldFollow) return;
-      const dpr = window.devicePixelRatio || 1;
-      el.style.transform = `translate3d(${state.mouse.x / dpr}px, ${state.mouse.y / dpr}px, 0) translate(-50%, -50%)`;
-    });
-    return () => unsubscribe();
-  }, [style.keepHighlight, style.showIndicator]);
+  useEffect(() => () => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+  }, []);
 
   const shouldRender = style.showClicks || style.keepHighlight || style.showIndicator;
+
+  // 订阅鼠标坐标,直写 DOM transform,避免高频 React 重渲染。
+  // 订阅建立时先应用一次当前坐标,避免组件重新挂载后停在左上角。
+  useEffect(() => {
+    const el = positionRef.current;
+    if (!el) return;
+    const apply = (x: number, y: number) => {
+      const dpr = window.devicePixelRatio || 1;
+      el.style.transform = `translate3d(${x / dpr}px, ${y / dpr}px, 0) translate(-50%, -50%)`;
+    };
+    const cur = useEventStore.getState();
+    apply(cur.mouse.x, cur.mouse.y);
+
+    const unsubscribe = useEventStore.subscribe((state, prev) => {
+      if (state.mouse.x === prev.mouse.x && state.mouse.y === prev.mouse.y) return;
+      const shouldFollow =
+        style.keepHighlight || state.pressedMouseButtons.length > 0 || style.showIndicator || style.keepIndicator;
+      if (!shouldFollow) return;
+      apply(state.mouse.x, state.mouse.y);
+    });
+    return () => unsubscribe();
+  }, [style.keepHighlight, style.showIndicator, style.keepIndicator, shouldRender]);
+
   if (!shouldRender) return null;
 
   return (
