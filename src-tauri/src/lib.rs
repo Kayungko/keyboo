@@ -90,6 +90,16 @@ fn set_cursor_passthrough(app: tauri::AppHandle, ignore: bool) -> Result<(), Str
     Ok(())
 }
 
+/// 覆盖层首帧就绪后由前端调用显示窗口。
+/// 启动时不直接 show:WebView 首帧渲染前 show 会出现一瞬间的透明窗体闪烁
+/// (参考软件 Keyviz 在 setup 直接 show,存在同样问题);改为前端挂载后通知。
+#[tauri::command]
+fn show_main_window(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+    }
+}
+
 /// 设置显隐快捷键:更新内存状态并持久化到 store
 #[tauri::command]
 fn set_toggle_shortcut(app: tauri::AppHandle, shortcut: Vec<String>) -> Result<(), String> {
@@ -172,9 +182,10 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // 显示覆盖层主窗口(默认铺满主显示器)
+            // 覆盖层主窗口(默认铺满主显示器)。
+            // 点击穿透 + 置顶 + 尺寸在不可见时先配好;show 由前端首帧后触发
+            // (show_main_window),避免 WebView 未渲染时的窗体闪烁。
             if let Some(window) = app.get_webview_window("main") {
-                // 点击穿透 + 置顶:必须先于 show 配置
                 config_overlay_window(&window);
                 if let Ok(monitors) = tauri::WebviewWindow::available_monitors(&window) {
                     if let Some(monitor) = monitors.first() {
@@ -188,7 +199,17 @@ pub fn run() {
                             (monitor.position().x, monitor.position().y);
                     }
                 }
-                let _ = window.show();
+            }
+
+            // 兜底:前端异常未能通知时,2s 后仍然显示(重复 show 无副作用)
+            {
+                let app_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.show();
+                    }
+                });
             }
 
             Ok(())
@@ -207,7 +228,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             set_main_window_monitor,
             set_toggle_shortcut,
-            set_cursor_passthrough
+            set_cursor_passthrough,
+            show_main_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running Keyboo");

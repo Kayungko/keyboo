@@ -26,6 +26,8 @@ export interface CompanionConfig {
   skin: "blob";
   size: number;
   showLevel: boolean;
+  /** 拖拽后的位置(CSS 像素,容器左上角相对窗口);null = 默认右下角 */
+  pos: [number, number] | null;
 }
 
 export interface CompanionStats {
@@ -47,7 +49,7 @@ const todayStr = () => {
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 };
 
-const defaultConfig = (): CompanionConfig => ({ enabled: true, skin: "blob", size: 96, showLevel: true });
+const defaultConfig = (): CompanionConfig => ({ enabled: true, skin: "blob", size: 96, showLevel: true, pos: null });
 const defaultStats = (): CompanionStats => ({
   totalKeys: 0,
   totalChars: 0,

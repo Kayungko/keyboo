@@ -1,10 +1,12 @@
-// 打字伙伴覆盖层:黑白小团子 + 等级称号 + 敲键冒 +1 + 点击气泡统计
+// 打字伙伴覆盖层:黑白小团子 + 等级称号 + 敲键冒 +1 + 点击气泡统计 + 拖拽
 //
 // 交互前提:覆盖层默认全屏点击穿透(set_ignore_cursor_events(true)),
-// 伙伴自身要能点击 → 组件把自身矩形上报给 Rust(set_companion_region),
-// 工作线程在鼠标移动时判定:矩形内恢复接收点击,矩形外恢复穿透。
+// 鼠标悬停伙伴时前端调用 set_cursor_passthrough(false) 局部恢复点击;
+// 拖拽进行中强制保持恢复(光标可能移出伙伴矩形),释放后按光标位置重新判定。
+// 拖拽中高频位置只存本地 state,释放时才写 store(持久化 + 双窗口同步)。
 
 import { invoke } from "@tauri-apps/api/core";
+import { cn } from "@/lib/utils";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { useEventStore } from "@/stores/useEventStore";
@@ -14,6 +16,18 @@ interface FloatOne {
   id: number;
 }
 
+interface DragState {
+  startX: number;
+  startY: number;
+  originLeft: number;
+  originTop: number;
+  moved: boolean;
+}
+
+const DRAG_THRESHOLD = 4;
+
+const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
+
 export function CompanionLayer() {
   const config = useCompanionStore((s) => s.config);
   const stats = useCompanionStore((s) => s.stats);
@@ -22,36 +36,95 @@ export function CompanionLayer() {
 
   const [bubbleOpen, setBubbleOpen] = useState(false);
   const [floats, setFloats] = useState<FloatOne[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const [localPos, setLocalPos] = useState<[number, number] | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<DragState | null>(null);
+  const localPosRef = useRef<[number, number] | null>(null);
   const controls = useAnimationControls();
   const mountedRef = useRef(false);
 
-  // 点击穿透翻转:覆盖层实时收到鼠标坐标(钩子事件不受穿透影响),
-  // 与自身矩形比较,进入时关闭穿透(伙伴可点击),离开时恢复全屏穿透。
-  // 卸载(暂停/静默)或禁用时恢复穿透。
+  const setPos = (p: [number, number] | null) => {
+    localPosRef.current = p;
+    setLocalPos(p);
+  };
+
+  const pos = dragging && localPos ? localPos : config.pos;
+
+  // 点击穿透翻转 + 拖拽跟随:覆盖层实时收到鼠标坐标(钩子事件不受穿透影响)
   useEffect(() => {
     if (!config.enabled) {
       void invoke("set_cursor_passthrough", { ignore: true });
       return;
     }
     let ignored = true;
+    const setIgnore = (value: boolean) => {
+      if (value === ignored) return;
+      ignored = value;
+      void invoke("set_cursor_passthrough", { ignore: value });
+    };
+
     const unsubscribe = useEventStore.subscribe((state, prev) => {
       if (state.mouse.x === prev.mouse.x && state.mouse.y === prev.mouse.y) return;
-      const el = rootRef.current;
-      if (!el) return;
       const dpr = window.devicePixelRatio || 1;
-      const r = el.getBoundingClientRect();
       const x = state.mouse.x / dpr;
       const y = state.mouse.y / dpr;
-      const inside = x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
-      const wantIgnore = !inside;
-      if (wantIgnore !== ignored) {
-        ignored = wantIgnore;
-        void invoke("set_cursor_passthrough", { ignore: wantIgnore });
+
+      // 拖拽中:跟随光标,且强制保持可点击(不恢复穿透)
+      const drag = dragRef.current;
+      if (drag) {
+        const dx = x - drag.startX;
+        const dy = y - drag.startY;
+        if (!drag.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+        if (!drag.moved) {
+          drag.moved = true;
+          setDragging(true);
+        }
+        const el = rootRef.current;
+        setPos([
+          clamp(drag.originLeft + dx, 0, window.innerWidth - (el?.offsetWidth ?? 0)),
+          clamp(drag.originTop + dy, 0, window.innerHeight - (el?.offsetHeight ?? 0)),
+        ]);
+        setIgnore(false);
+        return;
       }
+
+      // 常规翻转:进入伙伴矩形恢复点击,离开恢复全屏穿透
+      const el = rootRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setIgnore(!(x >= r.left && x <= r.right && y >= r.top && y <= r.bottom));
     });
+
+    // 释放:拖拽过则提交位置(持久化+同步),否则视为点击弹气泡
+    const onMouseUp = () => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      dragRef.current = null;
+      setDragging(false);
+      if (drag.moved) {
+        const p = localPosRef.current;
+        setPos(null);
+        if (p) useCompanionStore.getState().setConfig({ pos: p });
+      } else {
+        setBubbleOpen((o) => !o);
+      }
+    };
+
+    // 失焦兜底:mouseup 可能丢失(如 Alt+Tab),放弃本次拖拽
+    const onBlur = () => {
+      dragRef.current = null;
+      setDragging(false);
+      setPos(null);
+      setIgnore(true);
+    };
+
+    window.addEventListener("mouseup", onMouseUp);
+    window.addEventListener("blur", onBlur);
     return () => {
       unsubscribe();
+      window.removeEventListener("mouseup", onMouseUp);
+      window.removeEventListener("blur", onBlur);
       void invoke("set_cursor_passthrough", { ignore: true });
     };
   }, [config.enabled]);
@@ -100,11 +173,32 @@ export function CompanionLayer() {
 
   const level = levelOf(stats.totalChars);
 
+  const onMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const el = rootRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const m = useEventStore.getState().mouse;
+    const dpr = window.devicePixelRatio || 1;
+    dragRef.current = {
+      startX: m.x / dpr,
+      startY: m.y / dpr,
+      originLeft: r.left,
+      originTop: r.top,
+      moved: false,
+    };
+  };
+
   return (
     <div
       ref={rootRef}
-      className="absolute bottom-8 right-8 flex flex-col items-center select-none"
-      style={{ width: config.size }}
+      onMouseDown={onMouseDown}
+      className={cn(
+        "absolute flex flex-col items-center select-none",
+        !pos && "bottom-8 right-8",
+        dragging ? "cursor-grabbing" : "cursor-grab",
+      )}
+      style={{ width: config.size, ...(pos ? { left: pos[0], top: pos[1] } : {}) }}
     >
       {/* 等级称号 */}
       {config.showLevel && (
@@ -137,7 +231,7 @@ export function CompanionLayer() {
         </div>
 
         {/* 黑白小团子 */}
-        <motion.div animate={controls} className="cursor-pointer" onClick={() => setBubbleOpen((o) => !o)}>
+        <motion.div animate={controls}>
           <BlobSvg />
         </motion.div>
 

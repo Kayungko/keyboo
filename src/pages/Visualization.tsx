@@ -72,7 +72,14 @@ export function Visualization() {
 
     const timer = setInterval(tick, 250);
 
+    // 首帧渲染后再显示覆盖层,避免 WebView 未就绪时的窗体闪烁
+    // (Rust 侧另有 2s 兜底 show)
+    const raf = requestAnimationFrame(() => {
+      invoke("show_main_window").catch(() => {});
+    });
+
     return () => {
+      cancelAnimationFrame(raf);
       clearInterval(timer);
       if (badgeTimer.current) clearTimeout(badgeTimer.current);
       unlisteners.forEach((p) => p.then((un) => un()));

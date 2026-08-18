@@ -67,6 +67,17 @@ export const CompanionSettings = () => {
             <ItemDescription>黑白小团子(更多皮肤后期扩展)</ItemDescription>
           </ItemContent>
         </Item>
+        <Item variant="muted">
+          <ItemContent>
+            <ItemTitle>位置</ItemTitle>
+            <ItemDescription>在桌面上直接拖拽伙伴即可移动</ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <Button variant="outline" size="sm" disabled={config.pos === null} onClick={() => setConfig({ pos: null })}>
+              回到默认位置
+            </Button>
+          </ItemActions>
+        </Item>
       </div>
 
       <h2 className="mt-2 text-sm font-medium text-muted-foreground">成长统计</h2>
