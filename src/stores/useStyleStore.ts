@@ -99,6 +99,8 @@ export interface StyleState {
   border: BorderSettings;
   background: BackgroundSettings;
   mouse: MouseSettings;
+  /** 总实验性开关:关闭时隐藏所有实验性功能入口(如 3D 原型形象),默认关 */
+  experimental: boolean;
 }
 
 interface StyleActions {
@@ -110,6 +112,7 @@ interface StyleActions {
   setBorder: (border: Partial<BorderSettings>) => void;
   setBackground: (background: Partial<BackgroundSettings>) => void;
   setMouse: (mouse: Partial<MouseSettings>) => void;
+  setExperimental: (experimental: boolean) => void;
   importStyle: () => Promise<void>;
   exportStyle: () => Promise<void>;
 }
@@ -181,6 +184,7 @@ export const useStyleStore = create<StyleStore>()(
         trailWidth: 6,
         trailFadeMs: 600,
       },
+      experimental: false,
 
       setAppearance: (appearance) => set((s) => ({ appearance: { ...s.appearance, ...appearance } })),
       setLayout: (layout) => set((s) => ({ layout: { ...s.layout, ...layout } })),
@@ -190,6 +194,7 @@ export const useStyleStore = create<StyleStore>()(
       setBorder: (border) => set((s) => ({ border: { ...s.border, ...border } })),
       setBackground: (background) => set((s) => ({ background: { ...s.background, ...background } })),
       setMouse: (mouse) => set((s) => ({ mouse: { ...s.mouse, ...mouse } })),
+      setExperimental: (experimental) => set({ experimental }),
 
       // 样式导入/导出(JSON 文件)
       importStyle: async () => {
@@ -220,6 +225,7 @@ export const useStyleStore = create<StyleStore>()(
             border: { ...state.border, ...parsed.border },
             background: { ...state.background, ...parsed.background },
             mouse: { ...state.mouse, ...parsed.mouse },
+            experimental: parsed.experimental ?? state.experimental,
           });
           toast.success("导入成功", { description: filePath });
         } catch (err) {
@@ -237,6 +243,7 @@ export const useStyleStore = create<StyleStore>()(
           border: state.border,
           background: state.background,
           mouse: state.mouse,
+          experimental: state.experimental,
         };
         try {
           const filePath = await save({

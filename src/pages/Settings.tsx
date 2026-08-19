@@ -40,6 +40,7 @@ export default function Settings() {
       ]),
       startSyncSender(STYLE_STORE_NAME, useStyleStore, [
         "appearance", "layout", "color", "modifier", "text", "border", "background", "mouse",
+        "experimental",
       ]),
       // stats 也同步:设置页重置统计时即时通知覆盖层清零
       startSyncSender(COMPANION_STORE_NAME, useCompanionStore, ["config", "stats"]),

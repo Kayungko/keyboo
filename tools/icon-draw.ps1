@@ -6,11 +6,17 @@ Add-Type -AssemblyName System.Drawing
 
 function New-KeybooBitmap([int]$size) {
     $bmp = New-Object System.Drawing.Bitmap($size, $size)
+    $s = [float]$size
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $g.Clear([System.Drawing.Color]::Transparent)
 
-    $s = [float]$size
+    # 安全边距:主体缩放到 80% 并居中(四周留 10% 透明边距)。
+    # 微软图标规范:图标内容须比画布略小,否则标题栏/任务栏显示时会裁切顶格的圆角边缘;
+    # 10% 边距保证小尺寸(16px)与壳层非整数缩放下,裁切/舍入只消耗透明区,不伤主体。
+    $g.ScaleTransform(0.8, 0.8)
+    $g.TranslateTransform([single]($s * 0.1), [single]($s * 0.1))
+
     $ink = [System.Drawing.Color]::FromArgb(255, 20, 20, 20)
     $black = New-Object System.Drawing.SolidBrush($ink)
     $white = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 250, 250, 250))

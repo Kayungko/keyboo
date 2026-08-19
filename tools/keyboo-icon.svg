@@ -3,11 +3,13 @@
        几何与 tools/icon-draw.ps1 的 New-KeybooBitmap 完全一致:
        黑色键体(圆角 24)+ 白色键帽顶面(x10 y8 w80 h70 圆角 14)+ 圆头笔画 K(宽 11)
        任务栏/托盘位图由 GDI+ 按同参数绘制;前端 UI 与 favicon 使用本矢量图形。 -->
-  <rect width="100" height="100" rx="24" fill="#141414"/>
-  <rect x="10" y="8" width="80" height="70" rx="14" fill="#FAFAFA"/>
-  <g stroke="#141414" stroke-width="11" stroke-linecap="round" fill="none">
-    <path d="M36 24V62"/>
-    <path d="M64 24L41 42"/>
-    <path d="M45 39L64 62"/>
+  <g transform="translate(10 10) scale(0.8)">
+    <rect width="100" height="100" rx="24" fill="#141414"/>
+    <rect x="10" y="8" width="80" height="70" rx="14" fill="#FAFAFA"/>
+    <g stroke="#141414" stroke-width="11" stroke-linecap="round" fill="none">
+      <path d="M36 24V62"/>
+      <path d="M64 24L41 42"/>
+      <path d="M45 39L64 62"/>
+    </g>
   </g>
 </svg>

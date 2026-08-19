@@ -27,6 +27,7 @@ import daotongUrl from "@/assets/daotong.svg";
 import { BlobSvg } from "./BlobSvg";
 import { DaotongSvg } from "./DaotongSvg";
 import { useEventStore } from "@/stores/useEventStore";
+import { useStyleStore } from "@/stores/useStyleStore";
 import { charsOf, levelOf, profileOf, titleOf, todayCharsOf, useCompanionStore, type SkinId } from "@/stores/useCompanionStore";
 import { SoftBody } from "./SoftBody";
 import { SoftBody3D } from "./SoftBody3D";
@@ -322,7 +323,10 @@ export function CompanionLayer() {
   const profile = profileOf(config);
   const level = levelOf(charsOf(stats, config.character), profile);
   const title = titleOf(level, profile.levels);
-  const Skin = SKINS[config.skin] ?? SoftBody;
+  // 3D 原型是实验性皮肤:总实验性开关关闭时回落到 2D 渲染
+  const experimental = useStyleStore((s) => s.experimental);
+  const effectiveSkin: SkinId = config.skin === "blob3d" && !experimental ? "blob" : config.skin;
+  const Skin = SKINS[effectiveSkin] ?? SoftBody;
   // 形象纹理源:自定义图片(asset protocol)/ 道童(打包 SVG);汤圆无纹理源(BlobSvg/BODY_SVG 渲染)
   const skinUrl =
     config.skin === "custom" && config.customSkinFile
@@ -362,7 +366,7 @@ export function CompanionLayer() {
             {floats.map((f) => (
               <motion.div
                 key={f.id}
-                className="absolute left-0 text-sm font-bold text-white"
+                className="absolute left-0 whitespace-nowrap text-sm font-bold text-white"
                 style={{ textShadow: "0 1px 3px rgba(0,0,0,0.85)" }}
                 initial={{ opacity: 0, y: 0, x: "-50%", scale: 0.7 }}
                 animate={{ opacity: [0, 1, 0], y: -36, x: "-50%", scale: 1 }}

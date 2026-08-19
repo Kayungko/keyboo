@@ -6,7 +6,8 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 import { useEventStore } from "@/stores/useEventStore";
 import { useStyleStore } from "@/stores/useStyleStore";
-import { ArrowHorizontalIcon, ArrowVerticalIcon, FilterHorizontalIcon, FilterIcon, LayerIcon, ToggleOnIcon } from "@hugeicons/core-free-icons";
+import { useCompanionStore } from "@/stores/useCompanionStore";
+import { ArrowHorizontalIcon, ArrowVerticalIcon, FilterHorizontalIcon, FilterIcon, LayerIcon, MagicWand01Icon, ToggleOnIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -23,6 +24,8 @@ export const GeneralSettings = () => {
 
   const flexDirection = useStyleStore((state) => state.appearance.flexDirection);
   const setAppearance = useStyleStore((state) => state.setAppearance);
+  const experimental = useStyleStore((state) => state.experimental);
+  const setExperimental = useStyleStore((state) => state.setExperimental);
 
   return (
     <div className="flex flex-col gap-y-4 p-6">
@@ -109,6 +112,27 @@ export const GeneralSettings = () => {
           </ItemActions>
         </Item>
       </div>
+
+      <Item variant="muted">
+        <ItemContent>
+          <ItemTitle>
+            <HugeiconsIcon icon={MagicWand01Icon} size="1em" /> 实验性功能
+          </ItemTitle>
+          <ItemDescription>开启后显示实验性功能入口(如伙伴的 3D 原型形象),默认关闭</ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <Switch
+            checked={experimental}
+            onChange={(v) => {
+              setExperimental(v);
+              // 关闭时若正停在实验性形象上,回落到稳定形象
+              if (!v && useCompanionStore.getState().config.skin === "blob3d") {
+                useCompanionStore.getState().setConfig({ skin: "blob" });
+              }
+            }}
+          />
+        </ItemActions>
+      </Item>
 
       <Item variant="muted">
         <ItemHeader className="flex-col items-start">

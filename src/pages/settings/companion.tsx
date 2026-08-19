@@ -12,6 +12,7 @@ import daotongUrl from "@/assets/daotong.svg";
 import { cn } from "@/lib/utils";
 import { CHARACTERS, SKIN_CHARACTER } from "@/lib/companion/presets";
 import { DEFAULT_PHYSICS, PHYSICS_LIMITS, type PhysicsParams } from "@/lib/softbody/core";
+import { useStyleStore } from "@/stores/useStyleStore";
 import {
   charsOf,
   levelOf,
@@ -41,6 +42,8 @@ export const CompanionSettings = () => {
   const profile = profileOf(config);
   const level = levelOf(charsOf(stats, config.character), profile);
   const title = titleOf(level, profile.levels);
+  // 实验性形象(3D 原型)仅总实验性开关开启时显示入口
+  const experimental = useStyleStore((state) => state.experimental);
 
   const setParam = (key: keyof PhysicsParams, value: number) =>
     setConfig({ physicsParams: { ...config.physicsParams, [key]: value } });
@@ -132,14 +135,16 @@ export const CompanionSettings = () => {
             >
               <BlobSvg />
             </SkinCard>
-            <SkinCard
-              selected={config.skin === "blob3d"}
-              label="汤圆 · 3D 原型"
-              hint="实验性"
-              onClick={() => selectSkin("blob3d")}
-            >
-              <BlobSvg />
-            </SkinCard>
+            {experimental && (
+              <SkinCard
+                selected={config.skin === "blob3d"}
+                label="汤圆 · 3D 原型"
+                hint="实验性"
+                onClick={() => selectSkin("blob3d")}
+              >
+                <BlobSvg />
+              </SkinCard>
+            )}
             <SkinCard
               selected={config.skin === "daotong"}
               label="道童 · 修仙"
