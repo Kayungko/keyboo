@@ -15,6 +15,10 @@ pub struct AppState {
     /// 用户选定的显示器名(None = 铺满虚拟屏幕)。
     /// 分辨率变化时据此恢复窗口归属,避免重铺覆盖用户选择
     pub selected_monitor: Option<String>,
+    /// 设置窗口自定义的 Windows 小/大图标句柄。
+    /// 窗口关闭前先从 HWND 清除，再释放句柄，避免任务栏回退到被放大的 16px 默认图标。
+    #[cfg(target_os = "windows")]
+    pub settings_window_icons: Option<crate::icon::WindowIconHandles>,
 }
 
 impl AppState {
@@ -39,6 +43,8 @@ impl AppState {
             toggle_shortcut,
             monitor_position: (0, 0),
             selected_monitor: None,
+            #[cfg(target_os = "windows")]
+            settings_window_icons: None,
         }
     }
 

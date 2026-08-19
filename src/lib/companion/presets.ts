@@ -41,6 +41,18 @@ export interface CharacterPreset {
   profile: CompanionProfile;
 }
 
+/** 仅用于把旧版内置默认称号迁移到新版；自定义称号不会命中。 */
+export const LEGACY_JIANBO_LEVEL_TITLES = [
+  "见习键啵",
+  "练习键啵",
+  "熟练键啵",
+  "资深键啵",
+  "精英键啵",
+  "大师键啵",
+  "传奇键啵",
+  "键啵宗师",
+] as const;
+
 export const CHARACTERS: Record<CharacterId, CharacterPreset> = {
   // 键啵(汤圆):键盘系称号,经验单位 = 字数
   jianbo: {
@@ -52,14 +64,14 @@ export const CHARACTERS: Record<CharacterId, CharacterPreset> = {
     profile: {
       name: "键啵",
       levels: [
-        { title: "见习键啵", chars: 0 },
-        { title: "练习键啵", chars: 1500 },
-        { title: "熟练键啵", chars: 6000 },
-        { title: "资深键啵", chars: 15000 },
-        { title: "精英键啵", chars: 30000 },
-        { title: "大师键啵", chars: 60000 },
-        { title: "传奇键啵", chars: 100000 },
-        { title: "键啵宗师", chars: 160000 },
+        { title: "初醒汤圆", chars: 0 },
+        { title: "敲键学徒", chars: 1500 },
+        { title: "指尖熟手", chars: 6000 },
+        { title: "键盘搭子", chars: 15000 },
+        { title: "灵感捕手", chars: 30000 },
+        { title: "妙键生花", chars: 60000 },
+        { title: "万字行家", chars: 100000 },
+        { title: "一代键宗", chars: 160000 },
       ],
       extrapolation: { base: 60000, step: 25000 },
     },

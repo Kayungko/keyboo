@@ -12,7 +12,7 @@ import * as THREE from "three";
 import { FACE_SVG, rasterizeSvg } from "@/lib/softbody/assets";
 import { SoftBodyField, fieldDisplacement, type SkinProps } from "@/lib/softbody/core";
 
-const SEGMENTS = 48; // 球体细分(~2300 顶点)
+const SEGMENTS = 36; // 球体细分(~1400 顶点);面向 160px 展示上限,降低逐帧法线重算
 const BLOB_R = 0.26; // 角色盒归一化半径(身体占盒宽 ~52%,与 2D 皮肤一致)
 const FOV = 35;
 const REST_HALF = 0.5 / BLOB_R; // 静止时视锥半高(球直径 = 盒宽×2×BLOB_R)
@@ -46,18 +46,23 @@ export function SoftBody3D({ size, pull, params, visible }: SkinProps) {
   const paramsRef = useRef(params);
   const visibleRef = useRef(visible);
   const sizeRef = useRef(size);
+  const wakeRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     pullRef.current = pull;
+    wakeRef.current();
   }, [pull]);
   useEffect(() => {
     paramsRef.current = params;
+    wakeRef.current();
   }, [params]);
   useEffect(() => {
     visibleRef.current = visible;
+    wakeRef.current();
   }, [visible]);
   useEffect(() => {
     sizeRef.current = size;
+    wakeRef.current();
   }, [size]);
 
   useEffect(() => {
@@ -71,7 +76,7 @@ export function SoftBody3D({ size, pull, params, visible }: SkinProps) {
       antialias: true,
     });
     renderer.setClearColor(0x000000, 0);
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     renderer.setPixelRatio(dpr);
     const canvas = renderer.domElement;
     canvas.style.position = "absolute";
@@ -127,6 +132,7 @@ export function SoftBody3D({ size, pull, params, visible }: SkinProps) {
       faceMat.map = tex;
       faceMat.needsUpdate = true;
       face.visible = true;
+      wakeRef.current();
     });
 
     // ─── 物理场:球面顶点 → 角色归一化空间 ───
@@ -172,9 +178,17 @@ export function SoftBody3D({ size, pull, params, visible }: SkinProps) {
     applyLayout();
 
     // ─── rAF:软体物理 + 相机自适应 + 渲染 ───
+    // 静止后停帧；隐藏时不渲染但完成剩余回弹，交互/参数变化即时恢复。
     let raf = 0;
     let lastT = performance.now();
+    const wake = () => {
+      if (disposed || raf !== 0) return;
+      lastT = performance.now();
+      raf = requestAnimationFrame(step);
+    };
     const step = () => {
+      raf = 0;
+      if (disposed) return;
       const now = performance.now();
       const dt = Math.min(0.033, (now - lastT) / 1000);
       lastT = now;
@@ -182,7 +196,7 @@ export function SoftBody3D({ size, pull, params, visible }: SkinProps) {
 
       if (appliedSize !== sizeRef.current) applyLayout();
 
-      field.update(dt, pullRef.current, sizeRef.current, p);
+      const fieldMoving = field.update(dt, pullRef.current, sizeRef.current, p);
 
       // 球面顶点写回:归一化空间 → 球坐标
       for (let i = 0; i < n; i++) {
@@ -197,6 +211,7 @@ export function SoftBody3D({ size, pull, params, visible }: SkinProps) {
       geo.computeVertexNormals();
 
       // 脸片/耳朵:目标位移经弹簧平滑,与身体同步晃动
+      let anchorMoving = false;
       for (const a of anchors) {
         const disp = fieldDisplacement(a.u, a.v, pullRef.current, sizeRef.current, p);
         const tx = disp.du / BLOB_R;
@@ -208,6 +223,22 @@ export function SoftBody3D({ size, pull, params, visible }: SkinProps) {
         a.dx += a.vx * dt;
         a.dy += a.vy * dt;
         a.dz += a.vz * dt;
+        const movingX = Math.abs(tx - a.dx) > 1e-4 || Math.abs(a.vx) > 1e-3;
+        const movingY = Math.abs(ty - a.dy) > 1e-4 || Math.abs(a.vy) > 1e-3;
+        const movingZ = Math.abs(tz - a.dz) > 1e-4 || Math.abs(a.vz) > 1e-3;
+        if (!movingX) {
+          a.dx = tx;
+          a.vx = 0;
+        }
+        if (!movingY) {
+          a.dy = ty;
+          a.vy = 0;
+        }
+        if (!movingZ) {
+          a.dz = tz;
+          a.vz = 0;
+        }
+        anchorMoving ||= movingX || movingY || movingZ;
         a.obj.position.set(a.baseX + a.dx, a.baseY + a.dy, a.baseZ + a.dz);
       }
 
@@ -220,12 +251,14 @@ export function SoftBody3D({ size, pull, params, visible }: SkinProps) {
       if (visibleRef.current) {
         renderer.render(scene, camera);
       }
-      raf = requestAnimationFrame(step);
+      if (fieldMoving || anchorMoving) wake();
     };
-    raf = requestAnimationFrame(step);
+    wakeRef.current = wake;
+    wake();
 
     return () => {
       disposed = true;
+      wakeRef.current = () => {};
       cancelAnimationFrame(raf);
       geo.dispose();
       bodyMat.dispose();

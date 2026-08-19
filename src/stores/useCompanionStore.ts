@@ -21,6 +21,7 @@ import { DEFAULT_PHYSICS, type PhysicsParams } from "@/lib/softbody/core";
 import { MODIFIERS } from "@/lib/types";
 import {
   CHARACTERS,
+  LEGACY_JIANBO_LEVEL_TITLES,
   presetProfileOf,
   type CharacterId,
   type CompanionProfile,
@@ -58,6 +59,19 @@ export function normalizeLevels(input: unknown, fallbackTitle = "键啵"): Level
     if (raw[i].chars <= raw[i - 1].chars) raw[i].chars = raw[i - 1].chars + 1;
   }
   return raw;
+}
+
+/** 旧版完整默认称号自动跟随产品升级；任一称号被用户改过就视为自定义，不迁移。 */
+function migrateLegacyPresetTitles(id: CharacterId, levels: LevelNode[]): LevelNode[] {
+  if (
+    id !== "jianbo" ||
+    levels.length !== LEGACY_JIANBO_LEVEL_TITLES.length ||
+    !levels.every((level, index) => level.title === LEGACY_JIANBO_LEVEL_TITLES[index])
+  ) {
+    return levels;
+  }
+  const current = presetProfileOf("jianbo").levels;
+  return levels.map((level, index) => ({ ...level, title: current[index].title }));
 }
 
 /** 当前生效档案:当前角色的用户改动 ?? 该角色内置预设 */
@@ -267,12 +281,17 @@ export async function loadCompanionPersist() {
             : preset.extrapolation.step,
       };
       if (Array.isArray(raw.levels)) {
-        profiles[id] = { name, levels: normalizeLevels(raw.levels, preset.name), extrapolation };
+        const levels = migrateLegacyPresetTitles(id, normalizeLevels(raw.levels, preset.name));
+        profiles[id] = { name, levels, extrapolation };
       } else if (Array.isArray(raw.titles) && raw.titles.length > 0) {
         const base = typeof raw.levelBase === "number" ? raw.levelBase : 150;
+        const levels = migrateLegacyPresetTitles(
+          id,
+          normalizeLevels(raw.titles.map((t, i) => ({ title: t, chars: base * i * i })), preset.name),
+        );
         profiles[id] = {
           name,
-          levels: normalizeLevels(raw.titles.map((t, i) => ({ title: t, chars: base * i * i })), preset.name),
+          levels,
           extrapolation,
         };
       }

@@ -32,18 +32,23 @@ export function SoftBody({ size, pull, params, visible, asset }: SkinProps) {
   const paramsRef = useRef(params);
   const visibleRef = useRef(visible);
   const sizeRef = useRef(size);
+  const wakeRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     pullRef.current = pull;
+    wakeRef.current();
   }, [pull]);
   useEffect(() => {
     paramsRef.current = params;
+    wakeRef.current();
   }, [params]);
   useEffect(() => {
     visibleRef.current = visible;
+    wakeRef.current();
   }, [visible]);
   useEffect(() => {
     sizeRef.current = size;
+    wakeRef.current();
   }, [size]);
 
   useEffect(() => {
@@ -57,7 +62,8 @@ export function SoftBody({ size, pull, params, visible, asset }: SkinProps) {
       antialias: true,
     });
     renderer.setClearColor(0x000000, 0);
-    const dpr = window.devicePixelRatio || 1;
+    // 伙伴最大仅 160 CSS px；超过 2x 的超采样几乎不可见，却会成倍增加透明画布填充。
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     renderer.setPixelRatio(dpr);
     const canvas = renderer.domElement;
     canvas.style.position = "absolute";
@@ -84,6 +90,7 @@ export function SoftBody({ size, pull, params, visible, asset }: SkinProps) {
       mat.map = tex;
       mat.needsUpdate = true;
       texReady = true;
+      wakeRef.current();
     });
 
     // ─── 物理场:33×33 网格,静止坐标 = 纹理归一化坐标 ───
@@ -125,9 +132,18 @@ export function SoftBody({ size, pull, params, visible, asset }: SkinProps) {
     applyLayout();
 
     // ─── rAF:物理更新 + 网格顶点写入 + 渲染 ───
+    // 静止后彻底停帧；隐藏时不渲染，但会完成剩余回弹，避免下次显示旧形变。
+    // pull/参数/尺寸/可见性变化时由 effect 唤醒。
     let raf = 0;
     let lastT = performance.now();
+    const wake = () => {
+      if (disposed || raf !== 0) return;
+      lastT = performance.now();
+      raf = requestAnimationFrame(step);
+    };
     const step = () => {
+      raf = 0;
+      if (disposed) return;
       const now = performance.now();
       const dt = Math.min(0.033, (now - lastT) / 1000);
       lastT = now;
@@ -136,7 +152,7 @@ export function SoftBody({ size, pull, params, visible, asset }: SkinProps) {
         applyLayout();
       }
 
-      field.update(dt, pullRef.current, sizeRef.current, paramsRef.current);
+      const moving = field.update(dt, pullRef.current, sizeRef.current, paramsRef.current);
       for (let i = 0; i < field.count; i++) {
         posAttr.setXYZ(i, field.curU[i] - 0.5, 0.5 - field.curV[i], 0);
       }
@@ -145,12 +161,14 @@ export function SoftBody({ size, pull, params, visible, asset }: SkinProps) {
       if (texReady && visibleRef.current) {
         renderer.render(scene, camera);
       }
-      raf = requestAnimationFrame(step);
+      if (moving) wake();
     };
-    raf = requestAnimationFrame(step);
+    wakeRef.current = wake;
+    wake();
 
     return () => {
       disposed = true;
+      wakeRef.current = () => {};
       cancelAnimationFrame(raf);
       geo.dispose();
       mat.map?.dispose();

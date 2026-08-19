@@ -4,13 +4,12 @@
 use std::sync::Mutex;
 
 use tauri::{
-    image::Image,
-    include_image,
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
     Emitter, Manager, WebviewWindowBuilder,
 };
 
+mod icon;
 mod input;
 mod state;
 
@@ -223,7 +222,7 @@ pub fn run() {
 
             let menu = Menu::with_items(app, &[&toggle_item, &silent_item, &settings_item, &restart_item, &quit_item])?;
             let _ = TrayIconBuilder::with_id("keyboo-tray")
-                .icon(Image::from(include_image!("icons/64x64.png")))
+                .icon(icon::tray_image())
                 .tooltip("Keyboo 键啵")
                 .menu(&menu)
                 .show_menu_on_left_click(true)
@@ -249,8 +248,21 @@ pub fn run() {
                             .inner_size(760.0, 600.0)
                             .min_inner_size(600.0, 460.0)
                             .maximizable(false)
+                            // 先安装按 DPI 匹配的标题栏/任务栏图标，再显示窗口，避免首帧闪过模糊图标。
+                            .visible(false)
                             .build()
                             .unwrap();
+                        #[cfg(target_os = "windows")]
+                        match icon::set_window_icons(&window) {
+                            Ok(handles) => {
+                                let state = app.state::<Mutex<AppState>>();
+                                state.lock().unwrap().settings_window_icons = Some(handles);
+                            }
+                            Err(error) => {
+                                eprintln!("[keyboo] failed to set settings window icons: {error}")
+                            }
+                        }
+                        let _ = window.show();
                         let _ = window.set_focus();
                         let _ = app.emit_to("main", "settings-window", true);
                     }
@@ -355,6 +367,12 @@ pub fn run() {
                 return;
             }
             if let tauri::WindowEvent::CloseRequested { .. } = event {
+                #[cfg(target_os = "windows")]
+                {
+                    icon::clear_window_icons(window);
+                    let state = window.app_handle().state::<Mutex<AppState>>();
+                    state.lock().unwrap().settings_window_icons.take();
+                }
                 let _ = window
                     .app_handle()
                     .emit_to("main", "settings-window", false);

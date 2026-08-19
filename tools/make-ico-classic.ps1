@@ -1,12 +1,13 @@
 # 生成 Keyboo icon.ico:
-# - 16~64:经典 BMP/DIB 条目(兼容老版 rc.exe)
+# - 16~96:经典 BMP/DIB 条目(兼容老版 rc.exe);覆盖标题栏/托盘与
+#   Windows 11 任务栏在 100%~400% DPI 下的精确目标尺寸
 # - 128/256:PNG 压缩条目(高分辨率档,Vista+ 标准;修复任务栏/Alt-Tab 高 DPI 放大模糊)
-# 绘制函数见 icon-draw.ps1;几何同源 tools/keyboo-icon.svg
+# 绘制函数见 icon-draw.ps1;几何同源 tools/keyboo-icon.svg(分尺寸细节参数在绘制函数内)
 . "$PSScriptRoot\icon-draw.ps1"
 
 $dir = "C:\Users\admin\AppData\Local\.aimana\projects\AIMana\keyboo\src-tauri\icons"
 
-$bmpSizes = @(16, 24, 32, 48, 64)
+$bmpSizes = @(16, 20, 24, 30, 32, 36, 40, 48, 60, 64, 72, 80, 96)
 $pngSizes = @(128, 256)
 
 # 条目:@(size, kind, payload, dataSize)

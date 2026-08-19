@@ -156,6 +156,8 @@ export class SoftBodyField {
   private velU: Float32Array;
   private velV: Float32Array;
   private velW: Float32Array;
+  /** 只有回到静止形状后才为 true；拖拽目标处稳定不算静止，松手时仍需回弹。 */
+  private atRest = true;
 
   constructor(restU: ArrayLike<number>, restV: ArrayLike<number>, restW?: ArrayLike<number>) {
     const n = restU.length;
@@ -172,14 +174,22 @@ export class SoftBodyField {
     this.velW = new Float32Array(n);
   }
 
-  /** 一帧更新:dt 秒,pull = null 时目标回静止位(弹簧回弹) */
-  update(dt: number, pull: PullInfo | null, sizePx: number, p: PhysicsParams) {
+  /**
+   * 一帧更新:dt 秒,pull = null 时目标回静止位(弹簧回弹)。
+   * 返回是否仍在运动；静止且无拖拽时 O(1) 快速返回，供渲染器停止 rAF。
+   */
+  update(dt: number, pull: PullInfo | null, sizePx: number, p: PhysicsParams): boolean {
     const f = computeField(pull, sizePx, p);
     this.ampNorm = f.amp;
     const { count, restU, restV, restW, curU, curV, curW, velU, velV, velW } = this;
     const k = p.stiffness;
     const d = p.damping;
     const active = f.amp > 1e-5;
+    if (!active && this.atRest) return false;
+
+    const positionEpsilon = 1e-4;
+    const velocityEpsilon = 1e-3;
+    let moving = false;
     for (let i = 0; i < count; i++) {
       const ru = restU[i];
       const rv = restV[i];
@@ -204,6 +214,26 @@ export class SoftBodyField {
       curU[i] += velU[i] * dt;
       curV[i] += velV[i] * dt;
       if (this.withZ) curW[i] += velW[i] * dt;
+
+      const movingU = Math.abs(tu - curU[i]) > positionEpsilon || Math.abs(velU[i]) > velocityEpsilon;
+      const movingV = Math.abs(tv - curV[i]) > positionEpsilon || Math.abs(velV[i]) > velocityEpsilon;
+      const movingW =
+        this.withZ && (Math.abs(tw - curW[i]) > positionEpsilon || Math.abs(velW[i]) > velocityEpsilon);
+      if (!movingU) {
+        curU[i] = tu;
+        velU[i] = 0;
+      }
+      if (!movingV) {
+        curV[i] = tv;
+        velV[i] = 0;
+      }
+      if (this.withZ && !movingW) {
+        curW[i] = tw;
+        velW[i] = 0;
+      }
+      moving ||= movingU || movingV || movingW;
     }
+    this.atRest = !active && !moving;
+    return moving;
   }
 }
