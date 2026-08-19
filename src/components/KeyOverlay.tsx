@@ -1,5 +1,5 @@
 import { useEventStore } from "@/stores/useEventStore";
-import { alignmentForRow, useStyleStore } from "@/stores/useStyleStore";
+import { alignmentForColumn, alignmentForRow, useStyleStore } from "@/stores/useStyleStore";
 import { easeInQuint, easeOutQuint } from "@/lib/utils";
 import { AnimatePresence, motion, Variants } from "motion/react";
 import { Fragment, useMemo } from "react";
@@ -25,7 +25,9 @@ export const KeyOverlay = () => {
   const border = useStyleStore((state) => state.border);
   const background = useStyleStore((state) => state.background);
 
-  const alignment = alignmentForRow[appearance.alignment];
+  // column 主轴下 justifyContent/alignItems 角色互换,用对应的映射表
+  const alignment =
+    (appearance.flexDirection === "column" ? alignmentForColumn : alignmentForRow)[appearance.alignment];
 
   const containerStyle: React.CSSProperties = {
     flexDirection: appearance.flexDirection,

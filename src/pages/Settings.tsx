@@ -1,6 +1,7 @@
 // Keyboo 设置窗口(布局与交互对齐 Keyviz)
 
 import { ThemeModeToggle } from "@/components/ui/theme-mode-toggle";
+import { KeybooLogo } from "@/components/KeybooLogo";
 import { ComputerIcon, HappyIcon, InformationSquareIcon, KeyboardIcon, Mouse09Icon, Settings03Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Toaster } from "sonner";
@@ -51,7 +52,7 @@ export default function Settings() {
       {/* 侧边栏 */}
       <div className="flex w-44 flex-col gap-y-1 rounded-xl p-2">
         <div className="m-2 mb-2 flex items-center gap-x-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-keyboo text-sm font-bold text-background">K</div>
+          <KeybooLogo size={32} className="shrink-0 rounded-lg" />
           <div className="flex flex-col gap-y-0.5">
             <h1 className="text-sm font-semibold">Keyboo</h1>
             <p className="text-xs text-gray-400">v{VERSION}</p>

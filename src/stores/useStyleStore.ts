@@ -290,6 +290,11 @@ export const useStyleStore = create<StyleStore>()(
 );
 
 // ─── 对齐 → flex 属性映射 ───
+//
+// 主轴方向决定 justifyContent/alignItems 的角色:
+// - row(横排):justifyContent = 水平,alignItems = 垂直
+// - column(纵排):justifyContent = 垂直,alignItems = 水平
+// 两套映射分开定义,避免 column 布局下"底部居中"渲染成"垂直居中+靠右"
 
 const flexMap: Record<Alignment, Pick<React.CSSProperties, "justifyContent" | "alignItems">> = {
   "top-left": { justifyContent: "flex-start", alignItems: "flex-start" },
@@ -303,5 +308,17 @@ const flexMap: Record<Alignment, Pick<React.CSSProperties, "justifyContent" | "a
   "bottom-right": { justifyContent: "flex-end", alignItems: "flex-end" },
 };
 
+const flexMapColumn: Record<Alignment, Pick<React.CSSProperties, "justifyContent" | "alignItems">> = {
+  "top-left": { justifyContent: "flex-start", alignItems: "flex-start" },
+  "top-center": { justifyContent: "flex-start", alignItems: "center" },
+  "top-right": { justifyContent: "flex-start", alignItems: "flex-end" },
+  "center-left": { justifyContent: "center", alignItems: "flex-start" },
+  center: { justifyContent: "center", alignItems: "center" },
+  "center-right": { justifyContent: "center", alignItems: "flex-end" },
+  "bottom-left": { justifyContent: "flex-end", alignItems: "flex-start" },
+  "bottom-center": { justifyContent: "flex-end", alignItems: "center" },
+  "bottom-right": { justifyContent: "flex-end", alignItems: "flex-end" },
+};
+
 export const alignmentForRow = flexMap;
-export const alignmentForColumn = flexMap;
+export const alignmentForColumn = flexMapColumn;

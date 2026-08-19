@@ -64,13 +64,139 @@
   }
 }
 
-/* 打字伙伴:眨眼动画 */
-@keyframes companion-blink {
-  0%, 91%, 100% { transform: scaleY(1); }
-  95% { transform: scaleY(0.12); }
+/* ─── 打字伙伴动画 ───
+   触发方式:CompanionLayer 在身体包裹层挂状态类(随机调度,见组件内 idle scheduler)。
+   - 局部动画(仅汤圆 SVG):眨眼 / 张望 / 耳朵抖动,钩子在 BODY_SVG 的 class 上
+   - 全身动画(所有形象通用,含自定义图片):摇摆 / 蹦跳 / 呼吸,作用于包裹 div */
+
+/* 汤圆静止帧:SVG 撑满容器 */
+.companion-blob-svg svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* 道童内联 SVG:正方形容器内等比缩放居中(竖向图,避免撑破容器) */
+.companion-daotong-svg {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+.companion-daotong-svg svg {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+}
+
+/* 眨眼:一次性触发(外层挂 .companion-blinking) */
+@keyframes companion-blink-once {
+  0%, 100% { transform: scaleY(1); }
+  50% { transform: scaleY(0.12); }
 }
 .companion-eye {
-  animation: companion-blink 4.2s ease-in-out infinite;
   transform-box: fill-box;
   transform-origin: center;
+}
+.companion-blinking .companion-eye {
+  animation: companion-blink-once 0.24s ease-in-out;
+}
+
+/* 张望:眼斑整体偏移(眼斑组挂 .companion-look);
+   鼻子(.companion-nose)同节奏跟随且位移略大——鼻子凸出于脸面,
+   转头视差更大,五官才不会"散架" */
+@keyframes companion-look-left {
+  0%, 100% { transform: translateX(0); }
+  22%, 68% { transform: translateX(-42px); }
+}
+@keyframes companion-look-right {
+  0%, 100% { transform: translateX(0); }
+  22%, 68% { transform: translateX(42px); }
+}
+@keyframes companion-nose-left {
+  0%, 100% { transform: translateX(0); }
+  22%, 68% { transform: translateX(-52px); }
+}
+@keyframes companion-nose-right {
+  0%, 100% { transform: translateX(0); }
+  22%, 68% { transform: translateX(52px); }
+}
+.companion-idle-look-left .companion-look {
+  animation: companion-look-left 1.9s ease-in-out;
+}
+.companion-idle-look-right .companion-look {
+  animation: companion-look-right 1.9s ease-in-out;
+}
+.companion-idle-look-left .companion-nose {
+  animation: companion-nose-left 1.9s ease-in-out;
+}
+.companion-idle-look-right .companion-nose {
+  animation: companion-nose-right 1.9s ease-in-out;
+}
+
+/* 耳朵抖动 */
+@keyframes companion-ear-twitch {
+  0%, 100% { transform: rotate(0deg); }
+  30% { transform: rotate(-9deg); }
+  60% { transform: rotate(5deg); }
+}
+.companion-idle-ear .companion-ear {
+  animation: companion-ear-twitch 1s ease-in-out;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* 全身:摇摆(所有形象通用) */
+@keyframes companion-idle-sway {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(2.4deg); }
+  75% { transform: rotate(-2.4deg); }
+}
+.companion-idle-sway {
+  animation: companion-idle-sway 2.4s ease-in-out;
+  transform-origin: 50% 90%;
+}
+
+/* 全身:蹦跳(蓄力压扁 → 跳起 → 落地缓冲) */
+@keyframes companion-idle-bounce {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  30% { transform: translateY(0) scale(1.05, 0.9); }
+  55% { transform: translateY(-8%) scale(0.96, 1.06); }
+  78% { transform: translateY(0) scale(1.04, 0.94); }
+}
+.companion-idle-bounce {
+  animation: companion-idle-bounce 1.15s ease-in-out;
+  transform-origin: 50% 100%;
+}
+
+/* 全身:呼吸(缓慢的起伏,幅度小) */
+@keyframes companion-idle-breath {
+  0%, 100% { transform: scale(1, 1); }
+  50% { transform: scale(1.025, 0.97); }
+}
+.companion-idle-breath {
+  animation: companion-idle-breath 2.8s ease-in-out;
+  transform-origin: 50% 100%;
+}
+
+/* 道童·脑后灵光:金色圆光呼吸明暗(常驻,infinite) */
+@keyframes companion-halo-glow {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.8; }
+}
+.companion-halo {
+  animation: companion-halo-glow 3.6s ease-in-out infinite;
+}
+
+/* 道童·打坐吐纳:缓慢深长的呼吸 + 御气浮空(合并为一条常驻动画,比通用 breath 更慢更深) */
+@keyframes companion-daotong-float {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  50% { transform: translateY(-3.5%) scale(1.02, 0.97); }
+}
+.companion-daotong-idle {
+  animation: companion-daotong-float 4.5s ease-in-out infinite;
+  transform-origin: 50% 100%;
 }

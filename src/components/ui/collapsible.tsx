@@ -1,5 +1,6 @@
 // 折叠面板(键帽页分组用)
 
+import { cn } from "@/lib/utils";
 import { AnimatePresence, motion } from "motion/react";
 import { createContext, useContext, useState, type ReactNode } from "react";
 
@@ -20,10 +21,13 @@ export function Collapsible({ defaultOpen = false, children }: {
   );
 }
 
-export function CollapsibleTrigger({ children }: { children: ReactNode }) {
+export function CollapsibleTrigger({ className, children }: {
+  className?: string;
+  children: ReactNode;
+}) {
   const { toggle } = useContext(CollapsibleContext);
   return (
-    <button type="button" onClick={toggle} className="text-left">
+    <button type="button" onClick={toggle} className={cn("text-left", className)}>
       {children}
     </button>
   );

@@ -12,6 +12,9 @@ pub struct AppState {
     pub toggle_shortcut: Vec<String>,
     /// 覆盖层所在显示器的原点(物理像素),用于鼠标坐标换算
     pub monitor_position: (i32, i32),
+    /// 用户选定的显示器名(None = 铺满虚拟屏幕)。
+    /// 分辨率变化时据此恢复窗口归属,避免重铺覆盖用户选择
+    pub selected_monitor: Option<String>,
 }
 
 impl AppState {
@@ -35,6 +38,7 @@ impl AppState {
             silent: false,
             toggle_shortcut,
             monitor_position: (0, 0),
+            selected_monitor: None,
         }
     }
 

@@ -17,9 +17,9 @@ mod state;
 use input::start_input_listener;
 use state::AppState;
 
-/// 把覆盖层主窗口移动到指定名称的显示器上
-#[tauri::command]
-fn set_main_window_monitor(app: tauri::AppHandle, monitor_name: Option<String>) -> Result<(), String> {
+/// 把覆盖层窗口移到指定显示器并调整为该显示器尺寸(启动选择与分辨率变化恢复共用)。
+/// monitor_name 为 None / 空 / 未匹配时回退第一台显示器。
+fn apply_monitor_selection(app: &tauri::AppHandle, monitor_name: Option<&str>) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "main window not found".to_string())?;
@@ -29,7 +29,7 @@ fn set_main_window_monitor(app: tauri::AppHandle, monitor_name: Option<String>) 
     }
     let monitor = monitors
         .iter()
-        .find(|m| m.name().map(|s| s.as_str()) == monitor_name.as_deref())
+        .find(|m| m.name().map(|s| s.as_str()) == monitor_name)
         .unwrap_or(&monitors[0]);
 
     let size = monitor.size();
@@ -44,6 +44,16 @@ fn set_main_window_monitor(app: tauri::AppHandle, monitor_name: Option<String>) 
     // 记录显示器原点,供鼠标坐标换算
     let state = app.state::<Mutex<AppState>>();
     state.lock().unwrap().monitor_position = (position.x, position.y);
+    Ok(())
+}
+
+#[tauri::command]
+fn set_main_window_monitor(app: tauri::AppHandle, monitor_name: Option<String>) -> Result<(), String> {
+    let normalized = monitor_name.filter(|n| !n.is_empty());
+    apply_monitor_selection(&app, normalized.as_deref())?;
+    // 记录用户选择:分辨率变化时后台线程据此恢复,而不是重铺虚拟屏幕
+    let state = app.state::<Mutex<AppState>>();
+    state.lock().unwrap().selected_monitor = normalized;
     Ok(())
 }
 
@@ -131,6 +141,62 @@ fn set_toggle_shortcut(app: tauri::AppHandle, shortcut: Vec<String>) -> Result<(
     Ok(())
 }
 
+/// 自定义伙伴形象的存放目录($APPDATA/companions/)
+fn companions_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("companions");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+/// 导入自定义伙伴图片:校验格式/大小后复制到 $APPDATA/companions/custom.<ext>,
+/// 覆盖旧形象(同一时刻只保留一张自定义图),返回完整路径供前端 convertFileSrc 使用
+#[tauri::command]
+fn import_companion_image(app: tauri::AppHandle, path: String) -> Result<String, String> {
+    let src = std::path::Path::new(&path);
+    if !src.is_file() {
+        return Err("文件不存在".to_string());
+    }
+    let ext = src
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "gif" | "svg") {
+        return Err("不支持的格式,请选择 PNG / JPG / WebP / GIF / SVG 图片".to_string());
+    }
+    let meta = std::fs::metadata(src).map_err(|e| e.to_string())?;
+    if meta.len() > 8 * 1024 * 1024 {
+        return Err("图片过大(上限 8MB)".to_string());
+    }
+    let dir = companions_dir(&app)?;
+    // 清理旧的 custom.*(此前导入可能是别的扩展名)
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with("custom.") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    let dest = dir.join(format!("custom.{ext}"));
+    std::fs::copy(src, &dest).map_err(|e| e.to_string())?;
+    Ok(dest.to_string_lossy().into_owned())
+}
+
+/// 移除自定义伙伴图片
+#[tauri::command]
+fn remove_companion_image(app: tauri::AppHandle) -> Result<(), String> {
+    let dir = companions_dir(&app)?;
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if entry.file_name().to_string_lossy().starts_with("custom.") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -138,6 +204,7 @@ pub fn run() {
         .plugin(tauri_plugin_prevent_default::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_handle = app.handle().clone();
 
@@ -148,14 +215,15 @@ pub fn run() {
             let toggle_item = MenuItem::with_id(app, "toggle", "暂停", true, None::<&str>)?;
             let silent_item = MenuItem::with_id(app, "silent", "进入静默模式", true, None::<&str>)?;
             let settings_item = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
+            let restart_item = MenuItem::with_id(app, "restart", "重启", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
 
             // 启动全局输入捕获(钩子线程 + 工作线程)
             start_input_listener(app_handle.clone(), toggle_item.clone());
 
-            let menu = Menu::with_items(app, &[&toggle_item, &silent_item, &settings_item, &quit_item])?;
+            let menu = Menu::with_items(app, &[&toggle_item, &silent_item, &settings_item, &restart_item, &quit_item])?;
             let _ = TrayIconBuilder::with_id("keyboo-tray")
-                .icon(Image::from(include_image!("icons/32x32.png")))
+                .icon(Image::from(include_image!("icons/64x64.png")))
                 .tooltip("Keyboo 键啵")
                 .menu(&menu)
                 .show_menu_on_left_click(true)
@@ -186,6 +254,25 @@ pub fn run() {
                         let _ = window.set_focus();
                         let _ = app.emit_to("main", "settings-window", true);
                     }
+                    "restart" => {
+                        // 重启前落盘:设置窗口的 store 自动保存是防抖的,
+                        // 直接 restart 会丢弃防抖窗口内未写入的设置变更
+                        use tauri_plugin_store::StoreExt;
+                        if let Ok(store) = app.store("keyboo.json") {
+                            let _ = store.save();
+                        }
+                        #[cfg(debug_assertions)]
+                        {
+                            // dev 模式前端依赖 vite dev server:app.restart() 会先退出当前进程,
+                            // tauri-cli 随之清理 vite,重启出的孤儿二进制连不上 localhost → 拒绝连接。
+                            // dev 下改为重载所有窗口(代码变更的重启由 cargo watch 负责)
+                            for window in app.webview_windows().values() {
+                                let _ = window.eval("location.reload()");
+                            }
+                        }
+                        #[cfg(not(debug_assertions))]
+                        app.restart();
+                    }
                     "quit" => {
                         app.exit(0);
                     }
@@ -212,7 +299,10 @@ pub fn run() {
                 });
             }
 
-            // 显示器/RDP 分辨率变化监听:每 2s 检查虚拟屏幕尺寸,变化时重铺
+            // 显示器/RDP 分辨率变化监听:每 2s 检查虚拟屏幕尺寸,变化时按当前模式恢复——
+            // 用户选过显示器 → 重新定位到该显示器;未选择 → 重铺虚拟屏幕。
+            // last_w/h 用当前值初始化:否则首次迭代(0→实际值)必然触发重铺,
+            // 会在启动 2s 后覆盖前端刚应用的显示器选择(双屏下键盘跑错屏的根因)。
             {
                 let app_handle = app.handle().clone();
                 std::thread::spawn(move || {
@@ -221,17 +311,35 @@ pub fn run() {
                         use windows::Win32::UI::WindowsAndMessaging::{
                             GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN,
                         };
-                        let mut last_w = 0;
-                        let mut last_h = 0;
+                        let (mut last_w, mut last_h) = unsafe {
+                            (
+                                GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                                GetSystemMetrics(SM_CYVIRTUALSCREEN),
+                            )
+                        };
                         loop {
                             std::thread::sleep(std::time::Duration::from_secs(2));
-                            unsafe {
-                                let w = GetSystemMetrics(SM_CXVIRTUALSCREEN);
-                                let h = GetSystemMetrics(SM_CYVIRTUALSCREEN);
-                                if (w, h) != (last_w, last_h) {
-                                    last_w = w;
-                                    last_h = h;
-                                    let _ = fit_virtual_screen(&app_handle);
+                            let (w, h) = unsafe {
+                                (
+                                    GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                                    GetSystemMetrics(SM_CYVIRTUALSCREEN),
+                                )
+                            };
+                            if (w, h) != (last_w, last_h) {
+                                last_w = w;
+                                last_h = h;
+                                let selected = {
+                                    let state = app_handle.state::<Mutex<AppState>>();
+                                    let guard = state.lock().unwrap();
+                                    guard.selected_monitor.clone()
+                                };
+                                match selected.as_deref() {
+                                    Some(name) => {
+                                        let _ = apply_monitor_selection(&app_handle, Some(name));
+                                    }
+                                    None => {
+                                        let _ = fit_virtual_screen(&app_handle);
+                                    }
                                 }
                             }
                         }
@@ -255,7 +363,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             set_main_window_monitor,
             set_toggle_shortcut,
-            show_main_window
+            show_main_window,
+            import_companion_image,
+            remove_companion_image
         ])
         .run(tauri::generate_context!())
         .expect("error while running Keyboo");

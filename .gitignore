@@ -23,3 +23,6 @@ Thumbs.db
 
 # 日志
 *.log
+
+# 会话临时产物
+.tmpfiles/
