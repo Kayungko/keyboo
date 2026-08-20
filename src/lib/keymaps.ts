@@ -63,7 +63,7 @@ export const keymaps: Record<string, DisplayData> = {
   LeftArrow: { label: "left", glyph: "←", icon: ArrowLeftIcon, category: "arrow" },
   RightArrow: { label: "right", glyph: "→", icon: ArrowRightIcon, category: "arrow" },
   CapsLock: { label: "caps lock", glyph: "⇪", icon: ArrowBigUpDashIcon },
-  ScrollLock: { label: "scroll lock", glyph: "🖱", icon: MouseIcon },
+  ScrollLock: { label: "scroll lock", glyph: "⇳", icon: MouseIcon },
   NumLock: { label: "num lock", icon: LockIcon },
   Escape: { label: "escape", shortLabel: "esc", glyph: "⎋", icon: CircleArrowOutUpLeftIcon, category: "special" },
 

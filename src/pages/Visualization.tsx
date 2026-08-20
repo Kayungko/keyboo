@@ -11,6 +11,7 @@ import { EVENT_STORE_NAME, useEventStore } from "@/stores/useEventStore";
 import { STYLE_STORE_NAME, useStyleStore } from "@/stores/useStyleStore";
 import { QUOTA_STORE_NAME, loadQuotaPersist, useQuotaStore } from "@/stores/useQuotaStore";
 import { useQuotaPoll, forcePoll } from "@/lib/quota/poll";
+import { silentCheckAndNotify } from "@/lib/updater";
 import { listenSync } from "@/stores/sync";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -78,6 +79,9 @@ export function Visualization() {
     // 读盘完成后补一次强制查询(挂载时的首查早于 loaded 会被跳过)
     void loadCompanionPersist();
     void loadQuotaPersist().then(() => void forcePoll());
+
+    // 启动静默检查更新:仅生产构建且开关开启时执行,发现新版广播给设置窗口提示
+    void silentCheckAndNotify();
 
     const timer = setInterval(tick, 250);
 

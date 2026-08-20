@@ -1,5 +1,7 @@
 // 主题切换(浅色 / 深色 / 跟随系统)
 
+import { ComputerIcon, Moon01Icon, Sun01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { useEffect, useState } from "react";
 import { load } from "@tauri-apps/plugin-store";
 
@@ -83,7 +85,13 @@ export function ThemeModeToggle() {
         onClick={() => setOpen((o) => !o)}
         className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
       >
-        {mode === "dark" ? "🌙" : mode === "light" ? "☀️" : "💻"}
+        {mode === "dark" ? (
+          <HugeiconsIcon icon={Moon01Icon} size="1.1em" />
+        ) : mode === "light" ? (
+          <HugeiconsIcon icon={Sun01Icon} size="1.1em" />
+        ) : (
+          <HugeiconsIcon icon={ComputerIcon} size="1.1em" />
+        )}
       </button>
       {open && (
         <>

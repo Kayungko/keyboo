@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "release": "node tools/release.mjs"
   },
   "dependencies": {
     "@hugeicons/core-free-icons": "^3.3.0",
@@ -16,7 +17,9 @@
     "@tauri-apps/plugin-fs": "^2.5.1",
     "@tauri-apps/plugin-http": "^2.5.9",
     "@tauri-apps/plugin-opener": "^2.5.4",
+    "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-store": "^2.4.1",
+    "@tauri-apps/plugin-updater": "^2.10.1",
     "colord": "^2.9.3",
     "lucide-react": "^1.31.0",
     "motion": "^12.23.26",

@@ -33,6 +33,25 @@ npm run tauri build  # 构建(产物在 src-tauri/target/release 与 bundle/nsis
 技术栈:Tauri 2 + React 19 + TypeScript + Zustand + Motion + Tailwind CSS 4。
 输入捕获为自研 Windows 低级钩子实现(`src-tauri/src/input.rs`)。
 
+## 发布(检查更新依赖 GitHub Releases)
+
+更新源为 GitHub Releases,发布流程本地完成、经 gh CLI 上传:
+
+```bash
+npm run release -- patch   # 或 minor / major / 指定版本 x.y.z
+```
+
+脚本流程:同步版本号(package.json / tauri.conf.json / Cargo.toml)→ 提交并打 tag
+→ 签名构建(NSIS 安装包 + .sig + latest.json)→ 创建 GitHub Release 上传资产。
+
+发布机需要:
+
+- gh CLI 已登录(`gh auth login`);
+- 更新签名私钥 `%USERPROFILE%\.tauri\keyboo.key`
+  (由 `npx tauri signer generate -w <路径>` 生成,公钥已固化在 tauri.conf.json)。
+
+**注意:私钥丢失将无法再发布被客户端信任的更新,务必备份。**
+
 ## 许可
 
 [MIT](./LICENSE) © 2026 Keyboo
