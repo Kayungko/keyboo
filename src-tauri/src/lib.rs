@@ -196,6 +196,29 @@ fn remove_companion_image(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 读取本机 AI CLI 登录态原文(AI 额度订阅类数据源)。
+/// 白名单映射固定路径,拒绝任意路径读取:
+/// - codex  → %USERPROFILE%\.codex\auth.json
+/// - gemini → %USERPROFILE%\.gemini\oauth_creds.json
+#[tauri::command]
+fn read_local_credential(kind: String) -> Result<String, String> {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map_err(|_| "无法获取用户目录".to_string())?;
+    let rel: &[&str] = match kind.as_str() {
+        "codex" => &[".codex", "auth.json"],
+        "gemini" => &[".gemini", "oauth_creds.json"],
+        _ => return Err("未知的凭据类型".to_string()),
+    };
+    let path = rel
+        .iter()
+        .fold(std::path::PathBuf::from(&home), |p, seg| p.join(seg));
+    if !path.is_file() {
+        return Err(format!("未找到本机登录态:{}", path.display()));
+    }
+    std::fs::read_to_string(&path).map_err(|e| format!("读取失败:{e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -204,6 +227,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_http::init())
         .setup(|app| {
             let app_handle = app.handle().clone();
 
@@ -383,7 +407,8 @@ pub fn run() {
             set_toggle_shortcut,
             show_main_window,
             import_companion_image,
-            remove_companion_image
+            remove_companion_image,
+            read_local_credential
         ])
         .run(tauri::generate_context!())
         .expect("error while running Keyboo");

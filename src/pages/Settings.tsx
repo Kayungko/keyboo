@@ -2,13 +2,14 @@
 
 import { ThemeModeToggle } from "@/components/ui/theme-mode-toggle";
 import { KeybooLogo } from "@/components/KeybooLogo";
-import { ComputerIcon, HappyIcon, InformationSquareIcon, KeyboardIcon, Mouse09Icon, Settings03Icon } from "@hugeicons/core-free-icons";
+import { ComputerIcon, HappyIcon, InformationSquareIcon, KeyboardIcon, Mouse09Icon, Settings03Icon, BatteryCharging01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Toaster } from "sonner";
 import { useEffect, useState } from "react";
 import { COMPANION_STORE_NAME, useCompanionStore } from "@/stores/useCompanionStore";
 import { EVENT_STORE_NAME, useEventStore } from "@/stores/useEventStore";
 import { STYLE_STORE_NAME, useStyleStore } from "@/stores/useStyleStore";
+import { QUOTA_STORE_NAME, useQuotaStore } from "@/stores/useQuotaStore";
 import { startSyncSender } from "@/stores/sync";
 import { AboutPage } from "./settings/about";
 import { AppearanceSettings } from "./settings/appearance";
@@ -16,6 +17,7 @@ import { CompanionSettings } from "./settings/companion";
 import { GeneralSettings } from "./settings/general";
 import { KeycapSettings } from "./settings/keycap";
 import { MouseSettings } from "./settings/mouse";
+import { QuotaSettings } from "./settings/quota";
 
 export const VERSION = "0.3.0";
 
@@ -25,6 +27,7 @@ const sideBar = [
   { id: "keycap", label: "键帽", icon: KeyboardIcon },
   { id: "mouse", label: "鼠标", icon: Mouse09Icon },
   { id: "companion", label: "伙伴", icon: HappyIcon },
+  { id: "quota", label: "AI 额度", icon: BatteryCharging01Icon },
 ];
 
 export default function Settings() {
@@ -44,6 +47,7 @@ export default function Settings() {
       ]),
       // stats 也同步:设置页重置统计时即时通知覆盖层清零
       startSyncSender(COMPANION_STORE_NAME, useCompanionStore, ["config", "stats"]),
+      startSyncSender(QUOTA_STORE_NAME, useQuotaStore, ["config"]),
     ];
     return () => unsubscribers.forEach((un) => un());
   }, []);
@@ -99,6 +103,7 @@ export default function Settings() {
         {activeTab === "keycap" && <KeycapSettings />}
         {activeTab === "mouse" && <MouseSettings />}
         {activeTab === "companion" && <CompanionSettings />}
+        {activeTab === "quota" && <QuotaSettings />}
         {activeTab === "about" && <AboutPage />}
       </div>
 

@@ -1,4 +1,5 @@
 import { BlobSvg } from "@/components/BlobSvg";
+import { CorgiSvg } from "@/components/CorgiSvg";
 import { Button, Item, ItemActions, ItemContent, ItemDescription, ItemGrid, ItemTitle, NumberField, Switch } from "@/components/ui";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Slider } from "@/components/ui/slider";
@@ -136,14 +137,24 @@ export const CompanionSettings = () => {
               <BlobSvg />
             </SkinCard>
             {experimental && (
-              <SkinCard
-                selected={config.skin === "blob3d"}
-                label="汤圆 · 3D 原型"
-                hint="实验性"
-                onClick={() => selectSkin("blob3d")}
-              >
-                <BlobSvg />
-              </SkinCard>
+              <>
+                <SkinCard
+                  selected={config.skin === "blob3d"}
+                  label="汤圆 · 3D 原型"
+                  hint="实验性"
+                  onClick={() => selectSkin("blob3d")}
+                >
+                  <BlobSvg />
+                </SkinCard>
+                <SkinCard
+                  selected={config.skin === "corgi"}
+                  label="柯基 · 毛发实验"
+                  hint="实验性"
+                  onClick={() => selectSkin("corgi")}
+                >
+                  <CorgiSvg />
+                </SkinCard>
+              </>
             )}
             <SkinCard
               selected={config.skin === "daotong"}
@@ -179,7 +190,7 @@ export const CompanionSettings = () => {
           </div>
           {config.skin === "custom" && (
             <ItemDescription className="mt-2">
-              自定义形象支持 Q 弹拉拽与全身小动作,沿用当前角色的成长体系;眨眼等局部动画仅汤圆有
+              自定义形象支持 Q 弹拉拽与全身小动作,沿用当前角色的成长体系;局部五官动画仅分层 SVG 角色有
             </ItemDescription>
           )}
         </Item>

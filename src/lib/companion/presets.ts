@@ -26,7 +26,7 @@ export interface CompanionProfile {
   extrapolation: LevelExtrapolation;
 }
 
-export type CharacterId = "jianbo" | "daotong";
+export type CharacterId = "jianbo" | "daotong" | "corgi";
 
 export interface CharacterPreset {
   id: CharacterId;
@@ -104,6 +104,28 @@ export const CHARACTERS: Record<CharacterId, CharacterPreset> = {
       extrapolation: { base: 160000, step: 25000 },
     },
   },
+  // 柯基:实验性分层 SVG 角色，经验单位 = 默契。
+  corgi: {
+    id: "corgi",
+    name: "柯基",
+    unit: "默契",
+    floatText: "+1 默契",
+    tagline: "竖起耳朵，陪你捕捉灵感",
+    profile: {
+      name: "柯基",
+      levels: [
+        { title: "初来汪到", chars: 0 },
+        { title: "竖耳学徒", chars: 1500 },
+        { title: "敲键小犬", chars: 6000 },
+        { title: "桌面搭子", chars: 15000 },
+        { title: "灵感嗅探", chars: 30000 },
+        { title: "指尖飞犬", chars: 60000 },
+        { title: "万字巡逻", chars: 100000 },
+        { title: "首席陪伴官", chars: 160000 },
+      ],
+      extrapolation: { base: 60000, step: 25000 },
+    },
+  },
 };
 
 /** 角色默认档案(深拷贝,可安全写入配置) */
@@ -118,5 +140,6 @@ export const SKIN_CHARACTER: Record<SkinId, CharacterId | null> = {
   blob: "jianbo",
   blob3d: "jianbo",
   daotong: "daotong",
+  corgi: "corgi",
   custom: null,
 };

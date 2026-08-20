@@ -9,6 +9,8 @@ import type { EventPayload } from "@/lib/types";
 import { COMPANION_STORE_NAME, loadCompanionPersist, useCompanionStore } from "@/stores/useCompanionStore";
 import { EVENT_STORE_NAME, useEventStore } from "@/stores/useEventStore";
 import { STYLE_STORE_NAME, useStyleStore } from "@/stores/useStyleStore";
+import { QUOTA_STORE_NAME, loadQuotaPersist, useQuotaStore } from "@/stores/useQuotaStore";
+import { useQuotaPoll, forcePoll } from "@/lib/quota/poll";
 import { listenSync } from "@/stores/sync";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -30,6 +32,10 @@ export function Visualization() {
   const silentRef = useRef(false);
   const [badge, setBadge] = useState<string | null>(null);
   const badgeTimer = useRef<number | null>(null);
+
+  // AI 额度轮询:必须在暂停/静默提前 return 之前调用(hooks 规则),
+  // 暂停时进度条 UI 随伙伴隐藏,但 snapshots 持续更新
+  useQuotaPoll();
 
   const showBadge = (text: string) => {
     setBadge(text);
@@ -65,10 +71,13 @@ export function Visualization() {
       listenSync(EVENT_STORE_NAME, useEventStore.setState),
       listenSync(STYLE_STORE_NAME, useStyleStore.setState),
       listenSync(COMPANION_STORE_NAME, useCompanionStore.setState),
+      listenSync(QUOTA_STORE_NAME, useQuotaStore.setState),
     ];
 
-    // 伙伴配置/统计从磁盘加载(覆盖层是统计写盘方)
+    // 伙伴配置/统计从磁盘加载(覆盖层是统计写盘方);额度配置同样启动读盘,
+    // 读盘完成后补一次强制查询(挂载时的首查早于 loaded 会被跳过)
     void loadCompanionPersist();
+    void loadQuotaPersist().then(() => void forcePoll());
 
     const timer = setInterval(tick, 250);
 

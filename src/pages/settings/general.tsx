@@ -118,7 +118,7 @@ export const GeneralSettings = () => {
           <ItemTitle>
             <HugeiconsIcon icon={MagicWand01Icon} size="1em" /> 实验性功能
           </ItemTitle>
-          <ItemDescription>开启后显示实验性功能入口(如伙伴的 3D 原型形象),默认关闭</ItemDescription>
+          <ItemDescription>开启后显示实验性功能入口(伙伴 3D 原型、柯基毛发实验等),默认关闭</ItemDescription>
         </ItemContent>
         <ItemActions>
           <Switch
@@ -126,8 +126,9 @@ export const GeneralSettings = () => {
             onChange={(v) => {
               setExperimental(v);
               // 关闭时若正停在实验性形象上,回落到稳定形象
-              if (!v && useCompanionStore.getState().config.skin === "blob3d") {
-                useCompanionStore.getState().setConfig({ skin: "blob" });
+              const companion = useCompanionStore.getState();
+              if (!v && (companion.config.skin === "blob3d" || companion.config.skin === "corgi")) {
+                companion.setConfig({ skin: "blob", character: "jianbo" });
               }
             }}
           />

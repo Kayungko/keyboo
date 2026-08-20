@@ -35,8 +35,8 @@ export type { CharacterId } from "@/lib/companion/presets";
 
 export const COMPANION_STORE_NAME = "keyboo-companion-store";
 
-/** 皮肤 id:2D 经典 / 3D 原型 / 道童 / 自定义图片 */
-export type SkinId = "blob" | "blob3d" | "daotong" | "custom";
+/** 皮肤 id:2D 经典 / 3D 原型 / 道童 / 柯基实验 / 自定义图片 */
+export type SkinId = "blob" | "blob3d" | "daotong" | "corgi" | "custom";
 
 const CONFIG_KEY = "companion-config";
 const STATS_KEY = "companion-stats";
@@ -80,7 +80,7 @@ export const profileOf = (config: Pick<CompanionConfig, "character" | "profiles"
 
 export interface CompanionConfig {
   enabled: boolean;
-  /** 皮肤:blob = 2D 经典,blob3d = 3D 原型,daotong = 道童,custom = 自定义图片 */
+  /** 皮肤:blob = 2D 经典,blob3d = 3D 原型,daotong = 道童,corgi = 柯基实验,custom = 自定义图片 */
   skin: SkinId;
   size: number;
   showLevel: boolean;
@@ -261,7 +261,8 @@ export async function loadCompanionPersist() {
       profile?: Partial<CompanionProfile> & { titles?: string[]; levelBase?: number };
     };
     const { profile: _legacyProfile, profiles: _rawProfiles, character: _rawCharacter, ...restConfig } = rawConfig;
-    const character: CharacterId = rawConfig.character === "daotong" ? "daotong" : "jianbo";
+    const character: CharacterId =
+      rawConfig.character === "daotong" ? "daotong" : rawConfig.character === "corgi" ? "corgi" : "jianbo";
     const profiles: Partial<Record<CharacterId, CompanionProfile>> = {};
     /** 兼容最老格式(titles + levelBase 公式曲线)的档案入参类型 */
     type LegacyProfile = Partial<CompanionProfile> & { titles?: string[]; levelBase?: number };
@@ -308,6 +309,7 @@ export async function loadCompanionPersist() {
       skin:
         restConfig.skin === "blob3d" ? "blob3d"
         : restConfig.skin === "daotong" ? "daotong"
+        : restConfig.skin === "corgi" ? "corgi"
         : restConfig.skin === "custom" && restConfig.customSkinFile ? "custom"
         : "blob",
       physicsParams: { ...def.physicsParams, ...(restConfig.physicsParams ?? {}) },

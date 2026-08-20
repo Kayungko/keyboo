@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="柯基伙伴">
+  <!--
+    Keyboo Companion Rig v1
+    稳定动画节点：corgi-root / corgi-body / corgi-head / corgi-ear-left /
+    corgi-ear-right / corgi-look / corgi-eye-left / corgi-eye-right /
+    corgi-nose / corgi-mouth / corgi-tail / corgi-fur-* / corgi-paw-*
+    AI 动画只应修改这些节点的 transform / opacity，不重写角色 Path。
+  -->
+  <g id="corgi-root">
+    <!-- 尾巴在身体后方，单独成组供摇尾动画使用 -->
+    <g id="corgi-tail" class="companion-tail">
+      <path d="M680 674C735 649 797 659 842 700L817 769C765 757 718 735 680 707Z" fill="#E8902D"/>
+      <path d="M698 684C827 638 916 692 883 761C860 800 811 807 760 783C806 756 819 718 760 696C738 688 717 685 698 684Z" fill="#E8902D"/>
+      <path d="M850 677C896 691 905 728 883 761C870 779 854 788 834 790C860 757 867 716 850 677Z" fill="#FFF3DF"/>
+    </g>
+
+    <g id="corgi-body">
+      <path id="corgi-fur-body" d="M322 559C357 521 410 500 512 500C614 500 668 521 702 559L719 579L713 598L734 615L725 637L744 658L730 680L748 705L731 724L741 754L719 770L723 801L699 813L695 844L666 851C627 878 579 891 512 891C445 891 397 878 358 851L329 844L325 813L301 801L305 770L283 754L293 724L276 705L294 680L280 658L299 637L290 615L311 598L305 579Z" fill="#E8902D"/>
+      <path d="M350 675C360 602 417 552 512 552C607 552 664 602 674 675L659 827C625 866 578 884 512 884C446 884 399 866 365 827Z" fill="#F3A947"/>
+      <path id="corgi-fur-chest" d="M425 566L449 579L466 566L483 586L502 572L519 591L539 574L555 594L575 581L590 602L613 596L603 631L617 648L599 661L608 683L587 693L592 718L568 726L568 753L543 754L530 780L512 763L494 780L481 754L456 753L456 726L432 718L437 693L416 683L425 661L407 648L421 631L411 596L434 602Z" fill="#FFF3DF"/>
+      <path d="M390 785C369 806 359 837 365 872C389 890 423 897 456 889L461 815C442 786 416 777 390 785Z" fill="#FFF3DF"/>
+      <path d="M634 785C655 806 665 837 659 872C635 890 601 897 568 889L563 815C582 786 608 777 634 785Z" fill="#FFF3DF"/>
+    </g>
+
+    <g id="corgi-head">
+      <g id="corgi-ear-left" class="companion-ear corgi-ear-left">
+        <path d="M365 331C307 326 246 276 226 164C220 126 226 91 245 72C280 83 322 110 357 158C386 199 399 268 382 326Z" fill="#E8902D"/>
+        <path d="M344 289C306 271 273 226 261 146C258 127 259 111 263 99C291 116 320 143 340 176C361 210 369 253 361 291Z" fill="#F6B2A1"/>
+        <path d="M326 262C304 240 287 205 279 155C293 170 307 188 319 208C329 225 335 244 338 263Z" fill="#FFF3DF"/>
+      </g>
+      <g id="corgi-ear-right" class="companion-ear corgi-ear-right">
+        <path d="M659 331C717 326 778 276 798 164C804 126 798 91 779 72C744 83 702 110 667 158C638 199 625 268 642 326Z" fill="#E8902D"/>
+        <path d="M680 289C718 271 751 226 763 146C766 127 765 111 761 99C733 116 704 143 684 176C663 210 655 253 663 291Z" fill="#F6B2A1"/>
+        <path d="M698 262C720 240 737 205 745 155C731 170 717 188 705 208C695 225 689 244 686 263Z" fill="#FFF3DF"/>
+      </g>
+
+      <path id="corgi-fur-cheeks" d="M344 293L366 281L385 294L405 276L428 289L451 272L474 288L495 268L516 286L538 269L560 288L583 273L605 291L630 280L649 298L674 291L686 316L711 322L707 347L730 359L719 382L738 400L722 420L737 443L716 459L727 486L703 496L708 525L680 532L679 561L651 561L640 591L611 584C584 607 551 619 512 619C473 619 440 607 413 584L384 591L373 561L345 561L344 532L316 525L321 496L297 486L308 459L287 443L302 420L286 400L305 382L294 359L317 347L313 322L338 316Z" fill="#F3A947"/>
+      <path d="M382 326C420 291 460 276 512 276C564 276 604 291 642 326C670 352 686 397 680 449C674 511 624 573 512 573C400 573 350 511 344 449C338 397 354 352 382 326Z" fill="#F5AE50"/>
+
+      <!-- 面中白色火焰纹与脸颊，保持独立色块便于未来换装/换色 -->
+      <path d="M486 283L512 258L538 283L530 333L548 365L532 403L547 447L527 482L512 520L497 482L477 447L492 403L476 365L494 333Z" fill="#FFF3DF"/>
+      <path d="M363 427C391 396 429 391 457 413C477 429 482 459 467 486C446 524 400 542 358 520C344 492 346 450 363 427Z" fill="#FFF3DF"/>
+      <path d="M661 427C633 396 595 391 567 413C547 429 542 459 557 486C578 524 624 542 666 520C680 492 678 450 661 427Z" fill="#FFF3DF"/>
+      <ellipse cx="512" cy="482" rx="116" ry="89" fill="#FFF8EA"/>
+
+      <g id="corgi-look" class="companion-look">
+        <g id="corgi-eye-left" class="companion-eye">
+          <ellipse cx="431" cy="404" rx="42" ry="53" fill="#2B1A16"/>
+          <ellipse cx="431" cy="414" rx="29" ry="36" fill="#70411F"/>
+          <circle cx="417" cy="390" r="11" fill="#FFFFFF"/>
+          <circle cx="442" cy="420" r="5" fill="#FFFFFF" opacity=".72"/>
+        </g>
+        <g id="corgi-eye-right" class="companion-eye">
+          <ellipse cx="593" cy="404" rx="42" ry="53" fill="#2B1A16"/>
+          <ellipse cx="593" cy="414" rx="29" ry="36" fill="#70411F"/>
+          <circle cx="579" cy="390" r="11" fill="#FFFFFF"/>
+          <circle cx="604" cy="420" r="5" fill="#FFFFFF" opacity=".72"/>
+        </g>
+      </g>
+
+      <g id="corgi-nose" class="companion-nose">
+        <path d="M477 465C486 450 501 445 512 445C523 445 538 450 547 465C552 475 547 489 537 496L519 509C515 512 509 512 505 509L487 496C477 489 472 475 477 465Z" fill="#2A201F"/>
+        <ellipse cx="498" cy="463" rx="9" ry="5" fill="#FFFFFF" opacity=".3"/>
+      </g>
+      <g id="corgi-mouth">
+        <path d="M512 506C507 532 482 539 461 524" fill="none" stroke="#45251F" stroke-width="10" stroke-linecap="round"/>
+        <path d="M512 506C517 532 542 539 563 524" fill="none" stroke="#45251F" stroke-width="10" stroke-linecap="round"/>
+        <path d="M478 538C493 560 531 560 546 538C544 578 529 596 512 596C495 596 480 578 478 538Z" fill="#F58F86"/>
+        <path d="M489 566C504 558 520 558 535 566C528 584 520 591 512 591C504 591 496 584 489 566Z" fill="#FFB0A3"/>
+      </g>
+    </g>
+
+    <g id="corgi-paw-left">
+      <path d="M350 836C374 811 421 810 447 836C460 849 461 881 445 894C422 913 363 908 344 892C331 881 336 850 350 836Z" fill="#FFF3DF"/>
+      <path d="M375 872V890M405 868V893M433 873V889" stroke="#D7B89A" stroke-width="7" stroke-linecap="round"/>
+    </g>
+    <g id="corgi-paw-right">
+      <path d="M674 836C650 811 603 810 577 836C564 849 563 881 579 894C602 913 661 908 680 892C693 881 688 850 674 836Z" fill="#FFF3DF"/>
+      <path d="M649 872V890M619 868V893M591 873V889" stroke="#D7B89A" stroke-width="7" stroke-linecap="round"/>
+    </g>
+  </g>
+</svg>

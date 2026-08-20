@@ -14,8 +14,8 @@
 // 松手 spring 回弹后切回静止帧。
 //
 // 待机动画:停止打字一段时间后,随机调度器挂 CSS 动画类(见 app.css)——
-// 全身动作(摇摆/蹦跳/呼吸)所有形象通用;局部动作(张望/耳朵抖动)仅汤圆
-// (SVG 静止帧有动画钩子,道童与自定义图片没有)。眨眼独立随机触发,随时可能发生。
+// 全身动作(摇摆/蹦跳/呼吸)所有形象通用;分层 SVG 角色支持局部动作
+// (汤圆:张望/耳抖;柯基:张望/耳抖/摇尾)。眨眼独立随机触发。
 
 import { cn } from "@/lib/utils";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -24,11 +24,16 @@ import { type PullInfo, type SkinProps } from "@/lib/softbody/core";
 import { AnimatePresence, motion, useAnimationControls } from "motion/react";
 import { useEffect, useRef, useState, type AnimationEvent, type ComponentType } from "react";
 import daotongUrl from "@/assets/daotong.svg";
+import corgiUrl from "@/assets/corgi.svg";
 import { BlobSvg } from "./BlobSvg";
+import { CorgiSvg } from "./CorgiSvg";
 import { DaotongSvg } from "./DaotongSvg";
 import { useEventStore } from "@/stores/useEventStore";
 import { useStyleStore } from "@/stores/useStyleStore";
 import { charsOf, levelOf, profileOf, titleOf, todayCharsOf, useCompanionStore, type SkinId } from "@/stores/useCompanionStore";
+import { useQuotaStore } from "@/stores/useQuotaStore";
+import { providerOf } from "@/lib/quota/providers";
+import { QuotaBars, QuotaDetailRows } from "./quota/QuotaBars";
 import { SoftBody } from "./SoftBody";
 import { SoftBody3D } from "./SoftBody3D";
 
@@ -39,6 +44,7 @@ const SKINS: Record<SkinId, ComponentType<SkinProps>> = {
   blob: SoftBody,
   blob3d: SoftBody3D,
   daotong: SoftBody,
+  corgi: SoftBody,
   custom: SoftBody,
 };
 
@@ -73,14 +79,21 @@ type IdleAnim =
   | "companion-idle-breath"
   | "companion-idle-look-left"
   | "companion-idle-look-right"
-  | "companion-idle-ear";
+  | "companion-idle-ear"
+  | "companion-idle-tail";
 
 // 全身动作所有形象通用;张望/耳朵抖动依赖汤圆 SVG 的动画钩子(道童/自定义图片没有)
 const IDLE_ALL: IdleAnim[] = ["companion-idle-sway", "companion-idle-bounce", "companion-idle-breath"];
 const IDLE_BLOB_EXTRA: IdleAnim[] = ["companion-idle-look-left", "companion-idle-look-right", "companion-idle-ear"];
+const IDLE_CORGI_EXTRA: IdleAnim[] = [...IDLE_BLOB_EXTRA, "companion-idle-tail"];
 
 const pickIdle = (skin: SkinId): IdleAnim => {
-  const pool = skin === "blob" || skin === "blob3d" ? [...IDLE_ALL, ...IDLE_BLOB_EXTRA] : IDLE_ALL;
+  const pool =
+    skin === "blob" || skin === "blob3d"
+      ? [...IDLE_ALL, ...IDLE_BLOB_EXTRA]
+      : skin === "corgi"
+        ? [...IDLE_ALL, ...IDLE_CORGI_EXTRA]
+        : IDLE_ALL;
   return pool[Math.floor(Math.random() * pool.length)];
 };
 
@@ -92,6 +105,9 @@ export function CompanionLayer() {
   const stats = useCompanionStore((s) => s.stats);
   const charPulse = useCompanionStore((s) => s.charPulse);
   const levelUpPulse = useCompanionStore((s) => s.levelUpPulse);
+  const experimental = useStyleStore((s) => s.experimental);
+  const quotaConfig = useQuotaStore((s) => s.config);
+  const quotaSnapshots = useQuotaStore((s) => s.snapshots);
 
   const [bubbleOpen, setBubbleOpen] = useState(false);
   const [floats, setFloats] = useState<FloatOne[]>([]);
@@ -115,6 +131,14 @@ export function CompanionLayer() {
   };
 
   const pos = dragging && localPos ? localPos : config.pos;
+
+  // 实验总开关关闭或应用以默认关闭状态重启时，持久化配置也回落到稳定角色，
+  // 避免“汤圆外观 + 柯基等级档案”的跨角色错配。
+  useEffect(() => {
+    if (!experimental && (config.skin === "blob3d" || config.skin === "corgi")) {
+      useCompanionStore.getState().setConfig({ skin: "blob", character: "jianbo" });
+    }
+  }, [experimental, config.skin]);
 
   // 伙伴交互:监听全局钩子转发的鼠标坐标 + 按键状态,自行判定。
   useEffect(() => {
@@ -324,16 +348,54 @@ export function CompanionLayer() {
   const level = levelOf(charsOf(stats, config.character), profile);
   const title = titleOf(level, profile.levels);
   // 3D 原型是实验性皮肤:总实验性开关关闭时回落到 2D 渲染
-  const experimental = useStyleStore((s) => s.experimental);
-  const effectiveSkin: SkinId = config.skin === "blob3d" && !experimental ? "blob" : config.skin;
+  const effectiveSkin: SkinId = !experimental && (config.skin === "blob3d" || config.skin === "corgi") ? "blob" : config.skin;
   const Skin = SKINS[effectiveSkin] ?? SoftBody;
   // 形象纹理源:自定义图片(asset protocol)/ 道童(打包 SVG);汤圆无纹理源(BlobSvg/BODY_SVG 渲染)
   const skinUrl =
-    config.skin === "custom" && config.customSkinFile
+    effectiveSkin === "custom" && config.customSkinFile
       ? convertFileSrc(config.customSkinFile)
-      : config.skin === "daotong"
+      : effectiveSkin === "daotong"
         ? daotongUrl
+        : effectiveSkin === "corgi"
+          ? corgiUrl
         : null;
+
+  // AI 额度:总开关 + 已启用且有快照的源;条形图只画可换算 pct 的,气泡明细含错误态
+  const quotaRows = quotaConfig.enabled
+    ? quotaConfig.providers
+        .filter((p) => p.enabled)
+        .map((p) => ({ cfg: p, meta: providerOf(p.id), snap: quotaSnapshots[p.id] }))
+        .filter((x) => !!x.meta && !!x.snap)
+    : [];
+  const quotaBarItems = quotaRows
+    .filter((x) => x.snap.pct != null)
+    .map((x) => ({ id: x.cfg.id, pct: x.snap.pct as number, color: x.meta!.color, stale: x.snap.stale }));
+  const quotaDetailItems = quotaRows.map((x) => ({
+    name: x.meta!.name,
+    color: x.meta!.color,
+    label: x.snap.label,
+    pct: x.snap.pct,
+    error: x.snap.error,
+  }));
+
+  // 额度条悬挂位置:用户设置 + 贴边智能翻转(贴屏幕底边翻头顶、贴右边换左侧),
+  // 否则默认挂在脚边会被任务栏裁掉。resize 触发重算
+  const [, bumpViewport] = useState(0);
+  useEffect(() => {
+    const onResize = () => bumpViewport((t) => t + 1);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const rootBottom = pos ? pos[1] + config.size : window.innerHeight - 32;
+  const rootRight = pos ? pos[0] + config.size : window.innerWidth - 32;
+  const sidePlacement: "left" | "right" = window.innerWidth - rootRight < 44 ? "left" : "right";
+  const quotaPlacement: "bottom" | "top" | "left" | "right" = (() => {
+    const p = quotaConfig.position;
+    if (quotaConfig.style === "lights") return sidePlacement;
+    if (p === "side") return sidePlacement;
+    if (p === "top" || p === "bottom") return p;
+    return window.innerHeight - rootBottom < 70 ? "top" : "bottom";
+  })();
 
   return (
     <div
@@ -388,14 +450,16 @@ export function CompanionLayer() {
         >
           <div
             className={cn(
-              config.skin === "daotong" ? "companion-daotong-idle" : idleAnim,
+              effectiveSkin === "daotong" ? "companion-daotong-idle" : idleAnim,
               blinking && "companion-blinking",
             )}
             onAnimationEnd={onBodyAnimEnd}
             style={{ opacity: warping ? 0 : 1, transition: "opacity 0.08s" }}
           >
-            {config.skin === "daotong" ? (
+            {effectiveSkin === "daotong" ? (
               <DaotongSvg />
+            ) : effectiveSkin === "corgi" ? (
+              <CorgiSvg />
             ) : skinUrl ? (
               <div className="aspect-square w-full">
                 <img
@@ -422,7 +486,10 @@ export function CompanionLayer() {
         <AnimatePresence>
           {bubbleOpen && (
             <motion.div
-              className="absolute bottom-full right-0 z-20 mb-2 w-44 rounded-xl bg-black/80 p-3 text-white backdrop-blur-sm"
+              className={cn(
+                "absolute bottom-full right-0 z-20 mb-2 rounded-xl bg-black/80 p-3 text-white backdrop-blur-sm",
+                quotaDetailItems.length > 0 ? "w-52" : "w-44",
+              )}
               initial={{ opacity: 0, y: 6, scale: 0.95 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
@@ -449,10 +516,33 @@ export function CompanionLayer() {
                   <span className="font-mono">{charsOf(stats, config.character)}</span>
                 </div>
               </div>
+              {quotaDetailItems.length > 0 && (
+                <>
+                  <div className="my-2 h-px bg-white/10" />
+                  <QuotaDetailRows items={quotaDetailItems} appearance={quotaConfig.appearance} />
+                </>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
       </div>
+
+      {/* AI 额度进度条:绝对定位挂 rootRef(脱离文档流,不扩大拖拽命中矩形) */}
+      {quotaBarItems.length > 0 && (
+        <QuotaBars
+          style={quotaConfig.style}
+          placement={quotaPlacement}
+          glow={quotaConfig.glow}
+          pulse={quotaConfig.pulse}
+          appearance={quotaConfig.appearance}
+          offsetX={quotaConfig.offsetX}
+          offsetY={quotaConfig.offsetY}
+          podScale={quotaConfig.podScale}
+          barScale={quotaConfig.barScale}
+          items={quotaBarItems}
+          typingSignal={charPulse}
+        />
+      )}
     </div>
   );
 }
