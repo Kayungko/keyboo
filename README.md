@@ -52,6 +52,9 @@ npm run release -- patch   # 或 minor / major / 指定版本 x.y.z
 
 **注意:私钥丢失将无法再发布被客户端信任的更新,务必备份。**
 
+v0.4.0 之前发布的版本不含更新模块,无法自动更新,请到
+[Releases](https://github.com/Kayungko/keyboo/releases) 下载最新安装包覆盖安装。
+
 ## 许可
 
 [MIT](./LICENSE) © 2026 Keyboo
