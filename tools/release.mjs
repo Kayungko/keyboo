@@ -158,6 +158,8 @@ writeFileSync(latest, JSON.stringify(manifest, null, 2));
 console.log(`✓ latest.json → ${manifest.platforms["windows-x86_64"].url}`);
 
 // ─── 创建 GitHub Release 并上传资产 ───
+// 不加 shell:Windows cmd 会破坏含空格/括号的参数(npm 需要 shell 解析 npm.cmd,
+// 但其参数简单安全;gh 必须走参数数组)
 
 const rel = spawnSync(
   "gh",
@@ -167,7 +169,7 @@ const rel = spawnSync(
     ...(notes ? ["--notes", notes] : ["--generate-notes"]),
     exe, sig, latest,
   ],
-  { cwd: root, stdio: "inherit", shell: true },
+  { cwd: root, stdio: "inherit" },
 );
 if (rel.status !== 0) fail(`gh release create 失败;产物在 ${NSIS_DIR},重新运行同一命令即可续跑`);
 console.log(`✓ 已发布 https://github.com/${REPO}/releases/tag/${tag}`);
