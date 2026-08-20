@@ -27,6 +27,7 @@ import {
   useAppVersion,
   type DownloadProgress,
 } from "@/lib/updater";
+import { saveNow } from "@/stores/persist";
 
 type UpdateStatus = "idle" | "checking" | "latest" | "available" | "downloading" | "ready";
 
@@ -61,7 +62,11 @@ function UpdateItem() {
     setStatus("downloading");
     setProgress({ downloaded: 0 });
     try {
+      // Windows 上安装会直接退出进程,先把设置落盘避免防抖窗口内的变更丢失
+      await saveNow();
       await downloadAndInstallUpdate(update, setProgress);
+      // Windows 不会走到这(安装时进程已退出,NSIS 装完自动拉起新版);
+      // 其余平台兜底走手动重启
       setStatus("ready");
     } catch (e) {
       setStatus("available");

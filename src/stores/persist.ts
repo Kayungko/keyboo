@@ -31,3 +31,9 @@ export const keybooStorage: PersistStorage<any> = {
     await store.delete(name);
   },
 };
+
+/** 立即落盘。更新安装前必须调用:Windows 上安装会直接退出进程,
+ * autoSave 的 1s 防抖窗口内未写入的设置会丢(与托盘"重启"先落盘同理) */
+export async function saveNow() {
+  if (isSenderWindow) await store.save();
+}
