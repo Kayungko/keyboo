@@ -73,6 +73,14 @@ pub enum MouseButton {
     Other,
 }
 
+/// 工作线程维护的物理按住键:保留原始虚拟键码,
+/// 供保活周期用 GetAsyncKeyState 对账硬件状态、补发丢失的释放
+#[derive(Clone)]
+struct PressedKey {
+    vk: u32,
+    name: String,
+}
+
 pub fn start_input_listener(app: AppHandle, toggle_item: MenuItem<Wry>) {
     let (tx, rx) = sync_channel::<RawInput>(EVENT_QUEUE_CAPACITY);
     EVENT_TX.set(tx).expect("input channel already initialized");
@@ -203,8 +211,8 @@ fn start_worker_thread(app: AppHandle, rx: Receiver<RawInput>, toggle_item: Menu
         let mut pending_move: Option<(i32, i32)> = None;
         // 初始化为足够早的时刻,首个移动事件立即可派发
         let mut last_move_emit = Instant::now() - MOUSE_MOVE_EMIT_INTERVAL;
-        // 物理按下键列表(用于显隐快捷键匹配)
-        let mut pressed_keys: Vec<String> = Vec::new();
+        // 物理按下键列表(用于显隐快捷键匹配与保活对账)
+        let mut pressed_keys: Vec<PressedKey> = Vec::new();
         let mut last_keepalive = Instant::now();
 
         loop {
@@ -233,13 +241,16 @@ fn start_worker_thread(app: AppHandle, rx: Receiver<RawInput>, toggle_item: Menu
                 }
             }
 
-            // 长按保活:重发按下事件只用于刷新前端时间戳(前端对重复按下仅更新时间)
+            // 长按保活:重发按下事件只用于刷新前端时间戳(前端对重复按下仅更新时间)。
+            // 重发前先对账硬件状态:释放事件丢失的卡键在这里补发释放并移除,
+            // 否则会被保活永远重发、前端卡键清理因时间戳持续刷新而永远不触发。
             if last_keepalive.elapsed() >= KEEPALIVE_INTERVAL {
                 last_keepalive = Instant::now();
-                for key in pressed_keys.clone() {
+                reconcile_stuck_keys(&app, &mut pressed_keys);
+                for key in pressed_keys.iter() {
                     emit_input_event(
                         &app,
-                        InputEvent::KeyEvent { pressed: true, name: key },
+                        InputEvent::KeyEvent { pressed: true, name: key.name.clone() },
                     );
                 }
             }
@@ -253,13 +264,13 @@ fn start_worker_thread(app: AppHandle, rx: Receiver<RawInput>, toggle_item: Menu
                 RawInput::Key { vk, scan, flags, pressed } => {
                     let Some(name) = vk_to_name(vk, scan, flags) else { continue };
                     if pressed {
-                        if pressed_keys.iter().any(|k| k == name) {
+                        if pressed_keys.iter().any(|k| k.name == name) {
                             continue; // 忽略键盘自动重复
                         }
-                        pressed_keys.push(name.to_string());
+                        pressed_keys.push(PressedKey { vk, name: name.to_string() });
                         check_toggle_shortcut(&app, &pressed_keys, &toggle_item);
                     } else {
-                        pressed_keys.retain(|k| k != name);
+                        pressed_keys.retain(|k| k.name != name);
                     }
                     emit_input_event(&app, InputEvent::KeyEvent { pressed, name: name.to_string() });
                 }
@@ -276,14 +287,15 @@ fn start_worker_thread(app: AppHandle, rx: Receiver<RawInput>, toggle_item: Menu
 }
 
 /// 显隐快捷键:集合匹配(顺序无关、左右修饰键归一),默认 Shift + F10,可在设置中修改
-fn check_toggle_shortcut(app: &AppHandle, pressed_keys: &[String], toggle_item: &MenuItem<Wry>) {
+fn check_toggle_shortcut(app: &AppHandle, pressed_keys: &[PressedKey], toggle_item: &MenuItem<Wry>) {
+    let held_names: Vec<String> = pressed_keys.iter().map(|k| k.name.clone()).collect();
     // 先判定是否命中,立即释放锁——std::sync::Mutex 不可重入,
     // 绝不能持锁调用 toggle_listening / emit(内部会再次 emit 或加锁)
     let should_toggle = {
         let state = app.state::<Mutex<AppState>>();
         let app_state = state.lock().unwrap();
         !app_state.toggle_shortcut.is_empty()
-            && shortcut_matches(&app_state.toggle_shortcut, pressed_keys)
+            && shortcut_matches(&app_state.toggle_shortcut, &held_names)
     };
     if !should_toggle {
         return;
@@ -302,7 +314,7 @@ fn check_toggle_shortcut(app: &AppHandle, pressed_keys: &[String], toggle_item: 
             let _ = app.emit_to(
                 "main",
                 "input-event",
-                InputEvent::KeyEvent { pressed: false, name: key.clone() },
+                InputEvent::KeyEvent { pressed: false, name: key.name.clone() },
             );
         }
     }
@@ -330,6 +342,40 @@ fn shortcut_matches(shortcut: &[String], pressed: &[String]) -> bool {
     got.sort();
     want == got
 }
+
+/// 卡键对账:用硬件物理状态(GetAsyncKeyState)核对仍留在 pressed_keys 中的键,
+/// 对实际已松开的键补发释放并移除。
+///
+/// 释放事件可能丢失的已知通道:通道写满时 try_send 丢弃、UAC 安全桌面与会话切换
+/// 期间钩子收不到事件。卡键若留在 pressed_keys 中会被保活永远重发——前端卡键清理
+/// 因时间戳每 10s 被保活刷新而永远不触发,表现为无输入时键帽常驻;卡键还会污染
+/// 显隐快捷键的集合匹配(要求精确等长),导致 Shift+F10 失灵。以硬件状态为准对账,
+/// 每 10s 一次,最坏 10s 内自愈。
+///
+/// 注意:Return 与 KpReturn 共享 VK_RETURN、左右 Shift 在钩子里同为 VK_SHIFT,
+/// 共享 vk 时任一键仍物理按住则都保留——只可能延迟清理,不会误清真实按住。
+#[cfg(windows)]
+fn reconcile_stuck_keys(app: &AppHandle, pressed_keys: &mut Vec<PressedKey>) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+
+    let mut i = 0;
+    while i < pressed_keys.len() {
+        let physically_down =
+            (unsafe { GetAsyncKeyState(pressed_keys[i].vk as i32) } as u16 & 0x8000) != 0;
+        if physically_down {
+            i += 1;
+            continue;
+        }
+        let stuck = pressed_keys.remove(i);
+        emit_input_event(
+            app,
+            InputEvent::KeyEvent { pressed: false, name: stuck.name },
+        );
+    }
+}
+
+#[cfg(not(windows))]
+fn reconcile_stuck_keys(_app: &AppHandle, _pressed_keys: &mut Vec<PressedKey>) {}
 
 /// 打字伙伴的点击穿透翻转由前端判定(前端实时持有鼠标坐标与自身矩形),
 /// 通过 set_cursor_passthrough 命令下发,这里不再做区域判断。
