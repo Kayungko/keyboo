@@ -129,14 +129,15 @@ export const useEventStore = create<EventStore>()(
         const pressedKeys = [...state.pressedKeys, event.name];
         const pressedKeyTimes = { ...state.pressedKeyTimes, [event.name]: Date.now() };
 
+        // 1.5 打字伙伴计数(信号解耦):真实新按下即计数,先于显示过滤——
+        //     过滤只决定"哪些键显示",不再影响统计与伙伴成长(保活重发在步骤 0 已 return)
+        useCompanionStore.getState().registerKey(event.name);
+
         // 2. 过滤(被过滤的键保留物理状态,但不进入任何显示组)
         if (state.filter !== "none" && state.ignoreEvent(pressedKeys)) {
           set({ pressedKeys, pressedKeyTimes });
           return;
         }
-
-        // 2.5 打字伙伴计数:真实新按下且通过过滤(保活重发在步骤 0 已 return)
-        useCompanionStore.getState().registerKey(event.name);
 
         let groups = [...state.groups];
         const last = groups.length - 1;

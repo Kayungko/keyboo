@@ -88,6 +88,8 @@ export interface CompanionConfig {
   levelOffsetY: number;
   /** 拖拽后的位置(CSS 像素,容器左上角相对窗口);null = 默认右下角 */
   pos: [number, number] | null;
+  /** 敲键反馈:+1 气泡与 Q 弹(跟随真实打字,默认开;关闭仅静默计数) */
+  typingFeedback: boolean;
   /** Q 弹物理:左键按住拖动时果冻拉伸+松手回弹 */
   physics: boolean;
   /** 软体物理参数(刚度/阻尼/影响半径/限幅等,见 softbody/core) */
@@ -160,6 +162,7 @@ const defaultConfig = (): CompanionConfig => ({
   showLevel: true,
   levelOffsetY: 4,
   pos: null,
+  typingFeedback: true,
   physics: true,
   physicsParams: { ...DEFAULT_PHYSICS },
   character: "jianbo",
@@ -200,7 +203,8 @@ export const useCompanionStore = create<CompanionStore>()((set) => ({
     void saveConfig();
   },
 
-  // 真实新按下且通过过滤才计数(挂载点在 useEventStore.onKeyPress)
+  // 真实新按下即计数(信号解耦:挂载在 useEventStore.onKeyPress 显示过滤之前;
+  // 字数仍排除修饰键与鼠标虚拟键,总按键含鼠标点击)
   registerKey: (name) => {
     set((s) => {
       const today = todayStr();

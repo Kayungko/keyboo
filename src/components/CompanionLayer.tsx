@@ -249,6 +249,7 @@ export function CompanionLayer() {
 
   // 敲键:反馈按角色性格区分(首帧跳过;池上限 5 防堆积);打断待机动画
   //   汤圆 = 软萌 Q 弹压缩(幅度收小,连击不抖);道童 = 灵气轻托(轻微上浮,含蓄不违和)
+  //   typingFeedback 关闭时静默计数:只刷新活动时间戳,不弹不冒泡
   useEffect(() => {
     if (!mountedRef.current) {
       mountedRef.current = true;
@@ -256,6 +257,7 @@ export function CompanionLayer() {
     }
     if (charPulse === 0) return;
     lastKeyAtRef.current = performance.now();
+    if (!config.typingFeedback) return;
     setIdleAnim(null);
     const daotong = config.skin === "daotong";
     void controls.start(
@@ -264,7 +266,7 @@ export function CompanionLayer() {
         : { scale: [1, 0.94, 1.03, 1], rotate: 0, transition: { duration: 0.18, ease: "easeOut" } },
     );
     setFloats((fs) => [...fs.slice(-4), { id: charPulse }]);
-  }, [charPulse, controls, config.skin]);
+  }, [charPulse, controls, config.skin, config.typingFeedback]);
 
   // 升级:大弹跳 + 摇摆
   useEffect(() => {

@@ -237,6 +237,18 @@ export const CompanionSettings = () => {
         )}
         <Item variant="muted">
           <ItemContent>
+            <ItemTitle>敲键反馈</ItemTitle>
+            <ItemDescription>敲键时冒出 +1 气泡并轻微弹跳;关闭后静默计数,统计照常累积</ItemDescription>
+          </ItemContent>
+          <ItemActions>
+            <Switch
+              checked={config.typingFeedback}
+              onChange={(typingFeedback) => setConfig({ typingFeedback })}
+            />
+          </ItemActions>
+        </Item>
+        <Item variant="muted">
+          <ItemContent>
             <ItemTitle>Q 弹物理</ItemTitle>
             <ItemDescription>左键按住拖动时果冻拉伸,松手回弹</ItemDescription>
           </ItemContent>
@@ -431,6 +443,7 @@ export const CompanionSettings = () => {
         <Item variant="muted">
           <ItemContent>
             <ItemTitle>今日按键</ItemTitle>
+            <ItemDescription>物理按键与鼠标点击</ItemDescription>
           </ItemContent>
           <ItemActions>
             <span className="font-mono text-sm">{stats.todayKeys}</span>
@@ -447,6 +460,7 @@ export const CompanionSettings = () => {
         <Item variant="muted">
           <ItemContent>
             <ItemTitle>总按键</ItemTitle>
+            <ItemDescription>物理按键与鼠标点击</ItemDescription>
           </ItemContent>
           <ItemActions>
             <span className="font-mono text-sm">{stats.totalKeys}</span>
