@@ -424,19 +424,30 @@ export function CompanionLayer() {
             Lv.{level} {title}
           </div>
         )}
-        {/* +1 气泡 */}
+        {/* +1 气泡:icon + 文案,icon 为角色专属(键啵=键帽/道童=灵气光球/柯基=爪印) */}
         <div className="pointer-events-none absolute -top-3 left-1/2 z-10 h-0">
           <AnimatePresence>
             {floats.map((f) => (
               <motion.div
                 key={f.id}
-                className="absolute left-0 whitespace-nowrap text-sm font-bold text-white"
+                className="absolute left-0 flex items-center gap-1 whitespace-nowrap text-sm font-bold text-white"
                 style={{ textShadow: "0 1px 3px rgba(0,0,0,0.85)" }}
                 initial={{ opacity: 0, y: 0, x: "-50%", scale: 0.7 }}
                 animate={{ opacity: [0, 1, 0], y: -36, x: "-50%", scale: 1 }}
                 transition={{ duration: 0.8, ease: "easeOut" }}
                 onAnimationComplete={() => setFloats((fs) => fs.filter((x) => x.id !== f.id))}
               >
+                <svg
+                  viewBox="0 0 24 24"
+                  aria-hidden
+                  className="h-[1em] w-[1em] shrink-0"
+                  fill="currentColor"
+                  style={{ filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.85))" }}
+                >
+                  {character.floatIcon.paths.map((d, i) => (
+                    <path key={i} fillRule="evenodd" d={d} />
+                  ))}
+                </svg>
                 {character.floatText}
               </motion.div>
             ))}

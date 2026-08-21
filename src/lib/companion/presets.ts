@@ -28,6 +28,14 @@ export interface CompanionProfile {
 
 export type CharacterId = "jianbo" | "daotong" | "corgi";
 
+/** 敲键气泡角色专属 icon:单色白 inline SVG 的 path d 列表。
+ *  统一 viewBox "0 0 24 24"、fill=currentColor(继承 text-white);
+ *  键啵=键帽、道童=灵气光球、柯基=爪印;
+ *  custom 皮肤沿用当前角色的 icon(custom 只换渲染不切角色)。 */
+export interface FloatIcon {
+  paths: string[];
+}
+
 export interface CharacterPreset {
   id: CharacterId;
   /** 伙伴名称(气泡头、设置页) */
@@ -36,6 +44,8 @@ export interface CharacterPreset {
   unit: string;
   /** 敲键上浮气泡文案 */
   floatText: string;
+  /** 敲键上浮气泡的角色专属 icon(输入回声,不占自发预算) */
+  floatIcon: FloatIcon;
   /** 一句话性格标语(设置页「启用伙伴」描述) */
   tagline: string;
   profile: CompanionProfile;
@@ -60,6 +70,12 @@ export const CHARACTERS: Record<CharacterId, CharacterPreset> = {
     name: "键啵",
     unit: "字数",
     floatText: "+1",
+    // 键帽 K:实心圆角键帽 + evenodd 挖空 K 字(与 App 图标同源)
+    floatIcon: {
+      paths: [
+        "M7 4h10a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3ZM9.8 8h1.4v8H9.8V8ZM13.3 8h2.3l-4.4 4.6v-.1L13.3 8ZM13.3 16h2.3l-4.4-4.6v.1L13.3 16Z",
+      ],
+    },
     tagline: "陪你打字、吃经验成长",
     profile: {
       name: "键啵",
@@ -84,6 +100,14 @@ export const CHARACTERS: Record<CharacterId, CharacterPreset> = {
     name: "道童",
     unit: "灵气",
     floatText: "+1 灵气",
+    // 灵气光球:主球 + 左上/右下两粒小光尘
+    floatIcon: {
+      paths: [
+        "M12 8.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7Z",
+        "M5.6 5.2a1.1 1.1 0 1 1 0 2.2 1.1 1.1 0 0 1 0-2.2Z",
+        "M18.3 16.4a1.4 1.4 0 1 1 0 2.8 1.4 1.4 0 0 1 0-2.8Z",
+      ],
+    },
     tagline: "陪你打字、吸纳灵气修仙",
     profile: {
       name: "道童",
@@ -110,6 +134,15 @@ export const CHARACTERS: Record<CharacterId, CharacterPreset> = {
     name: "柯基",
     unit: "默契",
     floatText: "+1 默契",
+    // 爪印:一粒大肉垫 + 三粒趾垫
+    floatIcon: {
+      paths: [
+        "M12 12.8c2.4 0 4.4 1.8 4.4 3.9 0 1.9-1.7 3-4.4 3s-4.4-1.1-4.4-3c0-2.1 2-3.9 4.4-3.9Z",
+        "M6.3 8.8a1.5 1.9 0 1 1 0 3.8 1.5 1.9 0 0 1 0-3.8Z",
+        "M12 6.5a1.5 1.9 0 1 1 0 3.8 1.5 1.9 0 0 1 0-3.8Z",
+        "M17.7 8.8a1.5 1.9 0 1 1 0 3.8 1.5 1.9 0 0 1 0-3.8Z",
+      ],
+    },
     tagline: "竖起耳朵，陪你捕捉灵感",
     profile: {
       name: "柯基",
