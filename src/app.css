@@ -144,6 +144,63 @@
   animation: companion-nose-right 1.9s ease-in-out;
 }
 
+/* 柯基张望:头部整体转向(耳/眼/鼻随头),绕颈部支点小幅旋转+位移;
+   眼/鼻保留更小的视差偏移(眼球先行),避免五官脱出脸面。
+   keyframes 必须 companion- 前缀:onBodyAnimEnd 按前缀判定待机动画结束,
+   无前缀的 animationend 会被漏清 → idleAnim 状态残留、同动作不再重触发 */
+@keyframes companion-corgi-head-turn-left {
+  0%, 100% { transform: translateX(0) translateY(0) rotate(0deg); }
+  22%, 68% { transform: translateX(-16px) translateY(4px) rotate(-6deg); }
+}
+@keyframes companion-corgi-head-turn-right {
+  0%, 100% { transform: translateX(0) translateY(0) rotate(0deg); }
+  22%, 68% { transform: translateX(16px) translateY(4px) rotate(6deg); }
+}
+.companion-idle-look-left .companion-corgi-svg #corgi-head,
+.companion-idle-look-right .companion-corgi-svg #corgi-head {
+  animation-duration: 1.9s;
+  animation-timing-function: ease-in-out;
+  transform-box: view-box;
+  /* 颈部支点:头身衔接处(viewBox 1024 坐标系) */
+  transform-origin: 512px 596px;
+}
+.companion-idle-look-left .companion-corgi-svg #corgi-head {
+  animation-name: companion-corgi-head-turn-left;
+}
+.companion-idle-look-right .companion-corgi-svg #corgi-head {
+  animation-name: companion-corgi-head-turn-right;
+}
+
+/* 柯基眼/鼻视差:头已转向,偏移量缩小为通用版的约一半,只做眼球先行 */
+@keyframes companion-corgi-look-left {
+  0%, 100% { transform: translateX(0); }
+  22%, 68% { transform: translateX(-20px); }
+}
+@keyframes companion-corgi-look-right {
+  0%, 100% { transform: translateX(0); }
+  22%, 68% { transform: translateX(20px); }
+}
+@keyframes companion-corgi-nose-left {
+  0%, 100% { transform: translateX(0); }
+  22%, 68% { transform: translateX(-24px); }
+}
+@keyframes companion-corgi-nose-right {
+  0%, 100% { transform: translateX(0); }
+  22%, 68% { transform: translateX(24px); }
+}
+.companion-idle-look-left .companion-corgi-svg .companion-look {
+  animation: companion-corgi-look-left 1.9s ease-in-out;
+}
+.companion-idle-look-right .companion-corgi-svg .companion-look {
+  animation: companion-corgi-look-right 1.9s ease-in-out;
+}
+.companion-idle-look-left .companion-corgi-svg .companion-nose {
+  animation: companion-corgi-nose-left 1.9s ease-in-out;
+}
+.companion-idle-look-right .companion-corgi-svg .companion-nose {
+  animation: companion-corgi-nose-right 1.9s ease-in-out;
+}
+
 /* 耳朵抖动 */
 @keyframes companion-ear-twitch {
   0%, 100% { transform: rotate(0deg); }
@@ -222,12 +279,15 @@
   transform-origin: 50% 100%;
 }
 
-/* 道童·脑后灵光:金色圆光呼吸明暗(常驻,infinite) */
+/* 道童·脑后灵光:金色圆光呼吸明暗(常驻,infinite)。
+   0% 锚定 SVG 属性值 0.55(= WebGL 纹理冻结值),且作用域收窄到 companion-daotong-idle
+   ——warping 期该类被移除,灵光回落 0.55 恰与纹理一致;切回重挂类从 0% 重启,
+   两条边界均无明暗跳变(代价:呼吸幅度从 0.35↔0.8 收窄到 0.55↔0.8) */
 @keyframes companion-halo-glow {
-  0%, 100% { opacity: 0.35; }
+  0%, 100% { opacity: 0.55; }
   50% { opacity: 0.8; }
 }
-.companion-halo {
+.companion-daotong-idle .companion-halo {
   animation: companion-halo-glow 3.6s ease-in-out infinite;
 }
 
@@ -239,6 +299,15 @@
 .companion-daotong-idle {
   animation: companion-daotong-float 4.5s ease-in-out infinite;
   transform-origin: 50% 100%;
+}
+
+/* 软体拉拽期(warping):静态帧已淡出至 opacity:0,但其 CSS 动画(待机/眨眼/
+   SVG 局部动作)仍会逐帧推进——整段回弹期与 WebGL 逐帧渲染抢主线程。
+   统一暂停(含子元素);切回时动画类已被 completeSettle 移除,从基态淡入。
+   !important 盖过各动画规则的 shorthand 隐含 running */
+.companion-warped,
+.companion-warped * {
+  animation-play-state: paused !important;
 }
 
 /* ─── AI 额度进度条(全部 quota- 前缀;严禁 companion- 前缀,
