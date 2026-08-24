@@ -63,7 +63,26 @@ export interface SkinProps {
   visible: boolean;
   /** 自定义形象纹理源(asset protocol URL);缺省渲染内置角色 */
   asset?: string;
+  /**
+   * 物理场回弹至真实静止(逐顶点位移/速度均过判据)且无拉拽时触发一次。
+   * 渲染器内部防抖:挂载首帧(atRest)与拖拽目标稳定期(pull 非 null)不触发。
+   * CompanionLayer 以此为切换回静态帧的主信号,估算定时器只作兜底。
+   */
+  onSettled?: () => void;
+  /**
+   * 纹理光栅化结果(false = 加载失败/污染,CompanionLayer 据此拒绝进入 warping,
+   * 保留 DOM 静态帧避免"拉拽全程隐形")。仅资产型皮肤(SoftBody)上报,3D 皮肤忽略。
+   */
+  onTextureReady?: (ok: boolean) => void;
 }
+
+/**
+ * 视觉静止阈值:残余形变低于该值(≈0.3px@160)即视为静止、上报 onSettled。
+ * 物理判据(1e-4≈0.016px)会多等 ~1s 的不可感知振荡尾巴——低帧率环境
+ * (RDP/软件渲染)下这段尾巴逐帧渲染正是"卡帧"观感来源;残余跳变由
+ * 两阶段交叉淡化掩盖,不可见。
+ */
+export const VISUAL_SETTLE_EPS = 0.002;
 
 // ─── 内部:一帧的场参数(由 pull + params 推导) ───
 
@@ -149,6 +168,12 @@ export class SoftBodyField {
   curW: Float32Array;
   /** 当前生效的限幅拉伸幅度(角色尺寸归一化)——相机自适应等外部逻辑读取 */
   ampNorm = 0;
+  /**
+   * 本帧顶点相对静止位的最大位移(归一化)。松手瞬间 ampNorm 即归 0(computeField
+   * 对 null pull 返回 amp=0),不能用于"回弹中还剩多少形变"的判断;dispNorm 从
+   * cur-rest 实测,供 3D 皮肤驱动光照随形变消退等"真实形变量"逻辑。
+   */
+  dispNorm = 0;
 
   private restU: Float32Array;
   private restV: Float32Array;
@@ -185,11 +210,15 @@ export class SoftBodyField {
     const k = p.stiffness;
     const d = p.damping;
     const active = f.amp > 1e-5;
-    if (!active && this.atRest) return false;
+    if (!active && this.atRest) {
+      this.dispNorm = 0;
+      return false;
+    }
 
     const positionEpsilon = 1e-4;
     const velocityEpsilon = 1e-3;
     let moving = false;
+    let dispNorm = 0;
     for (let i = 0; i < count; i++) {
       const ru = restU[i];
       const rv = restV[i];
@@ -232,7 +261,17 @@ export class SoftBodyField {
         velW[i] = 0;
       }
       moving ||= movingU || movingV || movingW;
+      // 真实形变量:cur 偏离 rest 的最大分量(逐顶点取包络)
+      const dU = Math.abs(curU[i] - restU[i]);
+      const dV = Math.abs(curV[i] - restV[i]);
+      let dMax = dU > dV ? dU : dV;
+      if (this.withZ) {
+        const dW = Math.abs(curW[i] - restW[i]);
+        if (dW > dMax) dMax = dW;
+      }
+      if (dMax > dispNorm) dispNorm = dMax;
     }
+    this.dispNorm = dispNorm;
     this.atRest = !active && !moving;
     return moving;
   }

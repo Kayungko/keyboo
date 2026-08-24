@@ -48,6 +48,9 @@ export function rasterizeSvg(svg: string, size: number): Promise<HTMLCanvasEleme
 export function rasterizeImage(url: string, size: number): Promise<HTMLCanvasElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    // 显式声明 CORS:若 asset 响应缺 CORS 头,加载期即 onerror(而非 drawImage
+    // 污染 canvas 后拖到 WebGL texImage2D 才抛 SecurityError),失败尽早暴露
+    img.crossOrigin = "anonymous";
     img.onload = () => {
       const canvas = document.createElement("canvas");
       canvas.width = size;

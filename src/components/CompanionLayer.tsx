@@ -11,7 +11,8 @@
 //
 // 软体 Q 弹:拖动时切皮肤渲染器(SkinProps 协议,物理核心 SoftBodyField 共用),
 // 对拖拽点附近施加高斯衰减位移(限幅+面积守恒),只让按住的那一块局部拉伸;
-// 松手 spring 回弹后切回静止帧。
+// 松手回弹至物理场真实静止(onSettled 闭环)后切回静止帧——估算定时器仅兜底,
+// 杜绝"残余形变中硬切"的闪烁;切换时序为两阶段交叉淡化,无合成不透明度空窗。
 //
 // 待机动画:停止打字一段时间后,随机调度器挂 CSS 动画类(见 app.css)——
 // 全身动作(摇摆/蹦跳/呼吸)所有形象通用;分层 SVG 角色支持局部动作
@@ -66,9 +67,16 @@ interface DragState {
 }
 
 const DRAG_THRESHOLD = 4;
-// 松手后软体回弹稳定再切回静止帧的延迟:由阻尼推导(欠阻尼包络 e^{-(d/2)t} 衰减到 5% ≈ 6/d 秒),
-// 阻尼越小振荡越久;夹在 [600,1600]ms
-const settleMsOf = (damping: number) => Math.min(1600, Math.max(600, Math.round(6000 / Math.max(1, damping))));
+// onSettled 回调丢失(换肤重建物理场/rAF 停摆)时的兜底切换延迟:按弹簧特征根
+// 估算真实静止时长——欠阻尼取包络衰减率 d/2,过阻尼取慢模 d/2−√(d²/4−k)
+// (滑块域内过阻尼角点衰减慢得多);ε 用感知阈值 ~0.3px/size 而非物理判据 1e-4。
+// 默认参数 ≈1.7s,极端角点 k=10/d=20 ≈9.8s;夹在 [1500,15000]ms。
+const SETTLE_EPS = 0.003;
+const settleFallbackMs = (stiffness: number, damping: number, maxStretch: number) => {
+  const lam = damping * damping >= 4 * stiffness ? damping / 2 - Math.sqrt((damping * damping) / 4 - stiffness) : damping / 2;
+  const t = Math.log(Math.max(2, maxStretch / SETTLE_EPS)) / Math.max(lam, 0.45);
+  return Math.min(15000, Math.max(1500, Math.round(t * 1000)));
+};
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
@@ -125,9 +133,38 @@ export function CompanionLayer() {
   const controls = useAnimationControls();
   const mountedRef = useRef(false);
 
+  // 切换状态机的镜像 ref:闭包(定时器/调度器/皮肤回调)读实时值,不进 effect 依赖
+  const warpingRef = useRef(false); // 与 setWarping 同步
+  const pullMirrorRef = useRef<PullInfo | null>(null); // 与 setPull 同步
+  const texOkRef = useRef(true); // 皮肤纹理就绪(blob3d 不上报,保持 true)
+
   const setPos = (p: [number, number] | null) => {
     localPosRef.current = p;
     setLocalPos(p);
+  };
+
+  const updatePull = (p: PullInfo | null) => {
+    pullMirrorRef.current = p;
+    setPull(p);
+  };
+
+  // 统一的"回静止帧"收口:清兜底定时器 + 退出 warping + 清瞬态动画状态
+  // (idleAnim/blink 在 DOM 帧不可见时清除,淡入即基态,与 canvas 末帧几何对齐)
+  const completeSettle = () => {
+    if (settleTimerRef.current) {
+      window.clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = null;
+    }
+    warpingRef.current = false;
+    setWarping(false);
+    setIdleAnim(null);
+    setBlinking(false);
+  };
+
+  // 皮肤物理场真正静止的闭环信号(主路径;特征根兜底定时器仅在回调丢失时生效)
+  const handleSettled = () => {
+    if (!warpingRef.current || pullMirrorRef.current) return;
+    completeSettle();
   };
 
   const pos = dragging && localPos ? localPos : config.pos;
@@ -145,6 +182,12 @@ export function CompanionLayer() {
     const beginDrag = (button: string) => {
       const el = rootRef.current;
       if (!el) return;
+      // settle 窗口内任何新的按下:清掉旧回弹的兜底定时器,防止"软→静→软"双闪
+      // (物理场继续回弹,真正静止时 onSettled 照常干净切回)
+      if (settleTimerRef.current) {
+        window.clearTimeout(settleTimerRef.current);
+        settleTimerRef.current = null;
+      }
       const m = useEventStore.getState().mouse;
       const dpr = window.devicePixelRatio || 1;
       const x = m.x / dpr;
@@ -179,11 +222,16 @@ export function CompanionLayer() {
           if (p) useCompanionStore.getState().setConfig({ pos: p });
         }
       } else {
-        // 软体拉拽松手:回弹,稳定后切回静止帧
-        setPull(null);
+        // 软体拉拽松手:回弹,物理场真正静止(onSettled)后切回静态帧;
+        // 特征根兜底定时器只在回调丢失(换肤重建物理场等)时生效
+        updatePull(null);
         if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
-        const damping = useCompanionStore.getState().config.physicsParams.damping;
-        settleTimerRef.current = window.setTimeout(() => setWarping(false), settleMsOf(damping));
+        if (warpingRef.current) {
+          const p = useCompanionStore.getState().config.physicsParams;
+          settleTimerRef.current = window.setTimeout(() => {
+            if (warpingRef.current && !pullMirrorRef.current) completeSettle();
+          }, settleFallbackMs(p.stiffness, p.damping, p.maxStretch));
+        }
         if (!drag.moved) setBubbleOpen((o) => !o);
       }
     };
@@ -214,9 +262,13 @@ export function CompanionLayer() {
         drag.moved = true;
         setDragging(true);
         if (drag.mode === "pull") {
-          setWarping(true);
-          setIdleAnim(null);
-          if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
+          // 纹理未就绪/失败则不进入 warping:DOM 静态帧保持可见(物理场照常
+          // 隐形回弹,无副作用)。待机动画不清——80ms 淡出期内自然播完
+          // (所有 keyframes 0%/100% 恒等),消除起手姿势瞬跳
+          if (texOkRef.current) {
+            warpingRef.current = true;
+            setWarping(true);
+          }
         }
       }
       if (drag.mode === "move") {
@@ -226,7 +278,7 @@ export function CompanionLayer() {
           clamp(drag.originTop + dy, 0, window.innerHeight - (el?.offsetHeight ?? 0)),
         ]);
       } else {
-        setPull({ localX: drag.localX, localY: drag.localY, offsetX: dx, offsetY: dy });
+        updatePull({ localX: drag.localX, localY: drag.localY, offsetX: dx, offsetY: dy });
       }
     });
 
@@ -234,10 +286,10 @@ export function CompanionLayer() {
       dragRef.current = null;
       setDragging(false);
       setPos(null);
-      setPull(null);
-      setWarping(false);
-      setIdleAnim(null);
-      if (settleTimerRef.current) window.clearTimeout(settleTimerRef.current);
+      updatePull(null);
+      // blur = 中断语义:立即切回静态帧(残余形变属可接受的降级硬切)。
+      // blur 后 WebView 可能节流 rAF,等待 onSettled 反而会悬挂
+      completeSettle();
     };
     window.addEventListener("blur", onBlur);
     return () => {
@@ -295,13 +347,18 @@ export function CompanionLayer() {
     };
   }, [bubbleOpen]);
 
-  // 眨眼:随机间隔一次性触发(自然感;固定周期会显得机械)
+  // 眨眼:随机间隔一次性触发(自然感;固定周期会显得机械)。
+  // warping 期间推迟——WebGL 纹理不会眨眼,避免切回瞬间"半闭眼→睁开"跳变
   useEffect(() => {
     let timer: number;
     let cancelled = false;
     const schedule = (delay: number) => {
       timer = window.setTimeout(() => {
         if (cancelled) return;
+        if (warpingRef.current) {
+          schedule(1200 + Math.random() * 2400);
+          return;
+        }
         setBlinking(true);
         schedule(2200 + Math.random() * 3600);
       }, delay);
@@ -321,7 +378,8 @@ export function CompanionLayer() {
       timer = window.setTimeout(() => {
         if (cancelled) return;
         const idleMs = performance.now() - lastKeyAtRef.current;
-        if (idleMs > IDLE_AFTER_MS && !dragRef.current) {
+        // settle 窗口内不播:否则动画在隐形帧上启动,切回时以中段姿态淡入
+        if (idleMs > IDLE_AFTER_MS && !dragRef.current && !warpingRef.current) {
           const skin = useCompanionStore.getState().config.skin;
           // 道童走常驻打坐态(吐纳+浮空+灵光),不参与随机待机小动作
           if (skin !== "daotong") setIdleAnim(pickIdle(skin));
@@ -463,8 +521,15 @@ export function CompanionLayer() {
         >
           <div
             className={cn(
-              effectiveSkin === "daotong" ? "companion-daotong-idle" : idleAnim,
+              // 道童常驻浮动与 WebGL 静止基准不同步(切回落在任意动画相位,最高
+              // ~5.6px 错位):warping 期移除该类,DOM 回基态;切回重挂类从 0%
+              // (=基态)重启,与刚隐去的 canvas 末帧几何对齐
+              effectiveSkin === "daotong" ? (warping ? undefined : "companion-daotong-idle") : idleAnim,
               blinking && "companion-blinking",
+              // 隐形帧动画暂停:淡出后静态帧 opacity:0 但 CSS 动画仍逐帧推进,
+              // 整段回弹期与 WebGL 渲染抢主线程——统一暂停,切回时动画类已被
+              // completeSettle 移除,从基态淡入
+              warping && "companion-warped",
             )}
             onAnimationEnd={onBodyAnimEnd}
             style={{ opacity: warping ? 0 : 1, transition: "opacity 0.08s" }}
@@ -492,6 +557,10 @@ export function CompanionLayer() {
             params={config.physicsParams}
             visible={warping}
             asset={skinUrl ?? undefined}
+            onSettled={handleSettled}
+            onTextureReady={(ok) => {
+              texOkRef.current = ok;
+            }}
           />
         </motion.div>
 

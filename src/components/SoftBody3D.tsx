@@ -10,7 +10,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { FACE_SVG, rasterizeSvg } from "@/lib/softbody/assets";
-import { SoftBodyField, fieldDisplacement, type SkinProps } from "@/lib/softbody/core";
+import { SoftBodyField, fieldDisplacement, VISUAL_SETTLE_EPS, type SkinProps } from "@/lib/softbody/core";
 
 const SEGMENTS = 36; // 球体细分(~1400 顶点);面向 160px 展示上限,降低逐帧法线重算
 const BLOB_R = 0.26; // 角色盒归一化半径(身体占盒宽 ~52%,与 2D 皮肤一致)
@@ -40,12 +40,13 @@ interface Anchor {
   vz: number;
 }
 
-export function SoftBody3D({ size, pull, params, visible }: SkinProps) {
+export function SoftBody3D({ size, pull, params, visible, onSettled }: SkinProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const pullRef = useRef(pull);
   const paramsRef = useRef(params);
   const visibleRef = useRef(visible);
   const sizeRef = useRef(size);
+  const onSettledRef = useRef(onSettled);
   const wakeRef = useRef<() => void>(() => {});
 
   useEffect(() => {
@@ -64,16 +65,21 @@ export function SoftBody3D({ size, pull, params, visible }: SkinProps) {
     sizeRef.current = size;
     wakeRef.current();
   }, [size]);
+  useEffect(() => {
+    onSettledRef.current = onSettled;
+  }, [onSettled]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     // ─── 渲染器:透明背景 ───
+    // premultipliedAlpha/preserveDrawingBuffer 与 2D 皮肤同理:边缘合成一致 + 停帧末帧保留
     const renderer = new THREE.WebGLRenderer({
       alpha: true,
-      premultipliedAlpha: false,
+      premultipliedAlpha: true,
       antialias: true,
+      preserveDrawingBuffer: true,
     });
     renderer.setClearColor(0x000000, 0);
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -89,12 +95,15 @@ export function SoftBody3D({ size, pull, params, visible }: SkinProps) {
     // ─── 场景与相机(距离随拉伸自适应) ───
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 100);
-    camera.position.set(0, 0, REST_HALF / Math.tan((FOV * Math.PI) / 360));
+    const CAM_DIST = REST_HALF / Math.tan((FOV * Math.PI) / 360);
+    camera.position.set(0, 0, CAM_DIST);
     camera.lookAt(0, 0, 0);
 
-    // 光照:环境光 + 主光,体现 3D 体积
-    scene.add(new THREE.AmbientLight(0xffffff, 0.75));
-    const dir = new THREE.DirectionalLight(0xffffff, 1.1);
+    // 光照:环境光为主 + 主光随形变渐亮。静止时主光≈0.1,整体接近平涂——
+    // 与 2D 静止帧的亮度观感一致,消除切换瞬间的"光影消失"明暗阶跃;
+    // 拉拽形变中主光升到 1.1,保留体积感。初始即静止值,起步无亮度下冲
+    scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.1);
     dir.position.set(2, 3, 4);
     scene.add(dir);
 
@@ -115,9 +124,14 @@ export function SoftBody3D({ size, pull, params, visible }: SkinProps) {
     });
 
     // ─── 脸片:五官 decal 平面(贴着脸前表面;贴图加载前先隐藏,避免白板闪现) ───
+    // 透视补偿:脸片位于 z=0.98 前表面,透视相机会把它放大 CAM_DIST/(CAM_DIST-0.98)
+    // ≈1.19 倍(双眼表观间距比 2D 帧大 ~20%);整体缩放 (D-0.98)/D 恰好抵消,
+    // 使静止时五官比例与 2D 静止帧对齐,切回无"五官向内收"跳变
+    const FACE_PERSP = (CAM_DIST - 0.98) / CAM_DIST;
     const faceGeo = new THREE.PlaneGeometry(1.5, 1.5);
     const faceMat = new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false });
     const face = new THREE.Mesh(faceGeo, faceMat);
+    face.scale.setScalar(FACE_PERSP);
     face.position.z = 0.98;
     face.renderOrder = 1;
     face.visible = false;
@@ -179,8 +193,11 @@ export function SoftBody3D({ size, pull, params, visible }: SkinProps) {
 
     // ─── rAF:软体物理 + 相机自适应 + 渲染 ───
     // 静止后停帧；隐藏时不渲染但完成剩余回弹，交互/参数变化即时恢复。
+    // onSettled 闭环与 2D 皮肤同理:hadMotion 门防挂载首帧误触发,3D 侧静止
+    // = 物理场 + 跟随锚点 + 相机 lerp 三者全部收敛,任一未收敛都不上报。
     let raf = 0;
     let lastT = performance.now();
+    let hadMotion = false;
     const wake = () => {
       if (disposed || raf !== 0) return;
       lastT = performance.now();
@@ -242,16 +259,31 @@ export function SoftBody3D({ size, pull, params, visible }: SkinProps) {
         a.obj.position.set(a.baseX + a.dx, a.baseY + a.dy, a.baseZ + a.dz);
       }
 
+      // 光照:主光随真实形变量渐变。dispNorm 从 cur-rest 实测,松手回弹过程中
+      // 仍有值(ampNorm 对 null pull 立即归 0,不能用),回弹到位主光渐熄至 ~0.1
+      const targetI = 0.1 + Math.min(1, field.dispNorm * 3);
+      dir.intensity += (targetI - dir.intensity) * Math.min(1, dt * 8);
+
       // 相机:视锥半高 ≥ 球半径 + 最大位移 + 余量(位移 amp 是角色盒归一化,
       // 除以 BLOB_R 换算到球坐标)→ 任意拉伸不出画
       const halfH = Math.max(REST_HALF, 1 + (field.ampNorm + PAD_EXTRA) / BLOB_R);
       const targetZ = halfH / Math.tan((FOV * Math.PI) / 360);
       camera.position.z += (targetZ - camera.position.z) * Math.min(1, dt * 10);
+      const cameraMoving = Math.abs(camera.position.z - targetZ) > 1e-3;
 
       if (visibleRef.current) {
         renderer.render(scene, camera);
       }
-      if (fieldMoving || anchorMoving) wake();
+      // 视觉静止即切(与 2D 皮肤一致):残余 < 0.3px 不再等物理判据收尾
+      const settled = !pullRef.current && field.dispNorm < VISUAL_SETTLE_EPS;
+      const busy = (fieldMoving || anchorMoving || cameraMoving) && !settled;
+      if (busy) {
+        hadMotion = true;
+        wake();
+      } else if (hadMotion && !pullRef.current) {
+        hadMotion = false;
+        onSettledRef.current?.();
+      }
     };
     wakeRef.current = wake;
     wake();
@@ -281,6 +313,9 @@ export function SoftBody3D({ size, pull, params, visible }: SkinProps) {
         width: "100%",
         height: "100%",
         opacity: visible ? 1 : 0,
+        // 方向感知过渡(与 2D 皮肤一致):显示瞬时,隐藏延迟 80ms 后 80ms 淡出,
+        // DOM 帧先淡入到位、canvas 后退场,切换全程无合成不透明度空窗
+        transition: visible ? "none" : "opacity 0.08s linear 0.08s",
         pointerEvents: "none",
       }}
     />

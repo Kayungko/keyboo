@@ -8,7 +8,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { BODY_SVG, rasterizeImage, rasterizeSvg } from "@/lib/softbody/assets";
-import { SoftBodyField, type SkinProps } from "@/lib/softbody/core";
+import { SoftBodyField, VISUAL_SETTLE_EPS, type SkinProps } from "@/lib/softbody/core";
 
 const GRID = 32; // 32×32 段 → 33×33=1089 顶点,2048 三角形(GPU 无压力)
 const TEXTURE = 1024; // 纹理光栅化尺寸
@@ -26,12 +26,14 @@ const getSkinCanvas = (asset?: string) => {
   return p;
 };
 
-export function SoftBody({ size, pull, params, visible, asset }: SkinProps) {
+export function SoftBody({ size, pull, params, visible, asset, onSettled, onTextureReady }: SkinProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const pullRef = useRef(pull);
   const paramsRef = useRef(params);
   const visibleRef = useRef(visible);
   const sizeRef = useRef(size);
+  const onSettledRef = useRef(onSettled);
+  const onTextureReadyRef = useRef(onTextureReady);
   const wakeRef = useRef<() => void>(() => {});
 
   useEffect(() => {
@@ -50,16 +52,26 @@ export function SoftBody({ size, pull, params, visible, asset }: SkinProps) {
     sizeRef.current = size;
     wakeRef.current();
   }, [size]);
+  useEffect(() => {
+    onSettledRef.current = onSettled;
+  }, [onSettled]);
+  useEffect(() => {
+    onTextureReadyRef.current = onTextureReady;
+  }, [onTextureReady]);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
     // ─── 渲染器:透明背景 ───
+    // premultipliedAlpha:true —— three 输出的就是预乘像素,浏览器按 straight 合成会
+    // 得 C·a²(半透明边缘偏暗偏细);预乘合成与 DOM 帧边缘一致,切换帧无轮廓差。
+    // preserveDrawingBuffer —— 停帧后 canvas 末帧要在延迟淡出窗口内持续显示。
     const renderer = new THREE.WebGLRenderer({
       alpha: true,
-      premultipliedAlpha: false,
+      premultipliedAlpha: true,
       antialias: true,
+      preserveDrawingBuffer: true,
     });
     renderer.setClearColor(0x000000, 0);
     // 伙伴最大仅 160 CSS px；超过 2x 的超采样几乎不可见，却会成倍增加透明画布填充。
@@ -82,16 +94,24 @@ export function SoftBody({ size, pull, params, visible, asset }: SkinProps) {
 
     let texReady = false;
     let disposed = false;
-    void getSkinCanvas(asset).then((c) => {
-      if (disposed) return;
-      const tex = new THREE.CanvasTexture(c);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
-      mat.map = tex;
-      mat.needsUpdate = true;
-      texReady = true;
-      wakeRef.current();
-    });
+    // 纹理就绪上报:effect 重跑(换肤)先复位,加载成功/失败如实上报——
+    // 失败时 CompanionLayer 拒绝进入 warping,DOM 静态帧保持可见
+    onTextureReadyRef.current?.(false);
+    void getSkinCanvas(asset)
+      .then((c) => {
+        if (disposed) return;
+        const tex = new THREE.CanvasTexture(c);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+        mat.map = tex;
+        mat.needsUpdate = true;
+        texReady = true;
+        onTextureReadyRef.current?.(true);
+        wakeRef.current();
+      })
+      .catch(() => {
+        onTextureReadyRef.current?.(false);
+      });
 
     // ─── 物理场:33×33 网格,静止坐标 = 纹理归一化坐标 ───
     const stride = GRID + 1;
@@ -113,19 +133,23 @@ export function SoftBody({ size, pull, params, visible, asset }: SkinProps) {
     const applyLayout = () => {
       const s = sizeRef.current;
       const padNorm = paramsRef.current.maxStretch + PAD_EXTRA;
-      const ext = 0.5 + padNorm;
+      // 渲染区 padding 取整像素:canvas 尺寸/定位全部落在整数格点上,消除分数像素
+      // 亚像素错位(与 DOM 帧对齐);余量 PAD_EXTRA=0.15×size ≥ 9px,取整误差无裁切风险
+      const padPx = Math.round(s * padNorm);
+      // 相机 ext 由 padPx 反推(而非 padNorm),保证 plane 精确映射为 s CSS px
+      const ext = 0.5 + padPx / s;
       camera.left = -ext;
       camera.right = ext;
       camera.top = ext;
       camera.bottom = -ext;
       camera.updateProjectionMatrix();
-      const cssSize = s * (1 + padNorm * 2);
+      const cssSize = s + padPx * 2;
       // setSize 传 CSS 尺寸,pixelRatio 由 renderer 内部处理(updateStyle=false,样式自管)
       renderer.setSize(cssSize, cssSize, false);
       canvas.style.width = `${cssSize}px`;
       canvas.style.height = `${cssSize}px`;
-      canvas.style.left = `${-s * padNorm}px`;
-      canvas.style.top = `${-s * padNorm}px`;
+      canvas.style.left = `${-padPx}px`;
+      canvas.style.top = `${-padPx}px`;
       appliedSize = s;
       appliedStretch = paramsRef.current.maxStretch;
     };
@@ -134,8 +158,11 @@ export function SoftBody({ size, pull, params, visible, asset }: SkinProps) {
     // ─── rAF:物理更新 + 网格顶点写入 + 渲染 ───
     // 静止后彻底停帧；隐藏时不渲染，但会完成剩余回弹，避免下次显示旧形变。
     // pull/参数/尺寸/可见性变化时由 effect 唤醒。
+    // onSettled 闭环:hadMotion 门保证挂载首帧(update 立即返回 false)不误触发;
+    // 拖拽目标稳定期(pull 非 null、场已稳定)不算静止,松手回弹到位才上报。
     let raf = 0;
     let lastT = performance.now();
+    let hadMotion = false;
     const wake = () => {
       if (disposed || raf !== 0) return;
       lastT = performance.now();
@@ -159,9 +186,26 @@ export function SoftBody({ size, pull, params, visible, asset }: SkinProps) {
       posAttr.needsUpdate = true;
 
       if (texReady && visibleRef.current) {
-        renderer.render(scene, camera);
+        // 污染 canvas 的 SecurityError 发生在 render 的纹理上传,而非构造期——
+        // 兜住后降级为"纹理失败",让 CompanionLayer 保持 DOM 帧可见
+        try {
+          renderer.render(scene, camera);
+        } catch {
+          texReady = false;
+          onTextureReadyRef.current?.(false);
+        }
       }
-      if (moving) wake();
+      // 视觉静止即切:残余 < 0.3px 时不再等物理判据收尾,停帧并上报
+      // onSettled(切回由交叉淡化掩盖亚像素残余)——省掉低帧率环境下
+      // 逐帧渲染的"振荡尾巴",消除松手回弹的卡帧观感
+      const settled = !pullRef.current && field.dispNorm < VISUAL_SETTLE_EPS;
+      if (moving && !settled) {
+        hadMotion = true;
+        wake();
+      } else if (hadMotion && !pullRef.current) {
+        hadMotion = false;
+        onSettledRef.current?.();
+      }
     };
     wakeRef.current = wake;
     wake();
@@ -185,6 +229,10 @@ export function SoftBody({ size, pull, params, visible, asset }: SkinProps) {
         position: "absolute",
         inset: 0,
         opacity: visible ? 1 : 0,
+        // 方向感知过渡:显示时瞬时(承接 DOM 帧淡出),隐藏时延迟 80ms 再用
+        // 80ms 淡出——DOM 帧先淡入到位、canvas 后退场,任意时刻至少一帧全显,
+        // 切换全程合成不透明度不塌陷(停帧末帧由 preserveDrawingBuffer 保留)
+        transition: visible ? "none" : "opacity 0.08s linear 0.08s",
         pointerEvents: "none",
       }}
     />
