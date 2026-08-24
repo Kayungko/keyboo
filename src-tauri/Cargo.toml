@@ -1,6 +1,6 @@
 [package]
 name = "keyboo"
-version = "0.4.2"
+version = "0.4.3"
 description = "Keyboo 键啵 — 桌面按键可视化与打字伙伴"
 authors = ["Keyboo"]
 edition = "2021"
