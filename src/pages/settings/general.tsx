@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { useEventStore } from "@/stores/useEventStore";
 import { useStyleStore } from "@/stores/useStyleStore";
 import { useCompanionStore } from "@/stores/useCompanionStore";
-import { ArrowHorizontalIcon, ArrowVerticalIcon, FilterHorizontalIcon, FilterIcon, LayerIcon, MagicWand01Icon, ToggleOnIcon } from "@hugeicons/core-free-icons";
+import { ArrowHorizontalIcon, ArrowVerticalIcon, Cursor01Icon, FilterHorizontalIcon, FilterIcon, KeyboardIcon, LayerIcon, MagicWand01Icon, Mouse09Icon, ToggleOnIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -21,6 +21,12 @@ export const GeneralSettings = () => {
   const setMaxHistory = useEventStore((state) => state.setMaxHistory);
   const toggleShortcut = useEventStore((state) => state.toggleShortcut);
   const setToggleShortcut = useEventStore((state) => state.setToggleShortcut);
+  const showKeyboardEvents = useEventStore((state) => state.showKeyboardEvents);
+  const setShowKeyboardEvents = useEventStore((state) => state.setShowKeyboardEvents);
+  const showMouseEvents = useEventStore((state) => state.showMouseEvents);
+  const setShowMouseEvents = useEventStore((state) => state.setShowMouseEvents);
+  const showMouseEffects = useEventStore((state) => state.showMouseEffects);
+  const setShowMouseEffects = useEventStore((state) => state.setShowMouseEffects);
 
   const flexDirection = useStyleStore((state) => state.appearance.flexDirection);
   const setAppearance = useStyleStore((state) => state.setAppearance);
@@ -31,7 +37,50 @@ export const GeneralSettings = () => {
     <div className="flex flex-col gap-y-4 p-6">
       <h1 className="text-xl font-semibold">常规</h1>
 
+      <h2 className="text-sm font-medium text-muted-foreground">按键显示</h2>
+
       <Item variant="muted">
+        <ItemContent>
+          <ItemTitle>
+            <HugeiconsIcon icon={KeyboardIcon} size="1em" /> 键盘按键
+          </ItemTitle>
+          <ItemDescription>在按键显示中呈现键盘按键；关闭后仅保留鼠标按键画面</ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <Switch checked={showKeyboardEvents} onChange={setShowKeyboardEvents} />
+        </ItemActions>
+      </Item>
+
+      <Item variant="muted">
+        <ItemContent>
+          <ItemTitle>
+            <HugeiconsIcon icon={Mouse09Icon} size="1em" /> 鼠标按键
+          </ItemTitle>
+          <ItemDescription>在按键显示中呈现鼠标点击、滚轮与拖拽的键帽；关闭后仅保留键盘按键画面</ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <Switch checked={showMouseEvents} onChange={setShowMouseEvents} />
+        </ItemActions>
+      </Item>
+
+      <Item variant="muted">
+        <ItemContent>
+          <ItemTitle>
+            <HugeiconsIcon icon={Cursor01Icon} size="1em" /> 鼠标反馈
+          </ItemTitle>
+          <ItemDescription>呈现鼠标位置圆环、点击涟漪与移动拖尾；关闭后仅保留键帽画面，不影响鼠标键帽显示</ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <Switch checked={showMouseEffects} onChange={setShowMouseEffects} />
+        </ItemActions>
+      </Item>
+
+      <p className="text-xs text-muted-foreground">
+        键盘与鼠标按键均关闭时按键显示完全隐藏；如需连同打字伙伴一起隐藏，请使用下方的显隐快捷键或托盘暂停
+      </p>
+
+      <div className={cn("transition-opacity", showKeyboardEvents || showMouseEvents ? "" : "pointer-events-none opacity-50")}>
+        <Item variant="muted">
         <ItemContent>
           <ItemTitle>
             <HugeiconsIcon icon={FilterIcon} size="1em" /> 按键过滤
@@ -69,7 +118,8 @@ export const GeneralSettings = () => {
             <ToggleGroupItem value="custom">自定义</ToggleGroupItem>
           </ToggleGroup>
         </ItemActions>
-      </Item>
+        </Item>
+      </div>
 
       <Item variant="muted">
         <ItemContent>

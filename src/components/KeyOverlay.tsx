@@ -1,6 +1,7 @@
 import { useEventStore } from "@/stores/useEventStore";
 import { alignmentForColumn, alignmentForRow, useStyleStore } from "@/stores/useStyleStore";
 import { easeInQuint, easeOutQuint } from "@/lib/utils";
+import { isMouseKey } from "@/lib/types";
 import { AnimatePresence, motion, Variants } from "motion/react";
 import { Fragment, useMemo } from "react";
 import { Keycap } from "./keycaps";
@@ -19,6 +20,22 @@ export const KeyOverlay = () => {
   const pressedKeys = useEventStore((state) => state.pressedKeys);
   const groups = useEventStore((state) => state.groups);
   const showHistory = useEventStore((state) => state.showEventHistory);
+  const showKeyboardEvents = useEventStore((state) => state.showKeyboardEvents);
+  const showMouseEvents = useEventStore((state) => state.showMouseEvents);
+
+  // 设备维度渲染过滤:store 门控(onKeyPress 1.6)挡新键入组,这里善后
+  // "切换开关前已入组"的旧键帽——settingsOpen 期间 tick 暂停清理,纯 store
+  // 门控会让旧鼠标键帽冻结在屏上;直接订阅开关布尔即拨即生效。
+  // 过滤后变空的整组必须丢弃,否则 background.enabled 时残留只有 padding 的空色块。
+  const visibleGroups = useMemo(() => {
+    if (showKeyboardEvents && showMouseEvents) return groups;
+    return groups
+      .map((g) => ({
+        ...g,
+        keys: g.keys.filter((k) => (isMouseKey(k.name) ? showMouseEvents : showKeyboardEvents)),
+      }))
+      .filter((g) => g.keys.length > 0);
+  }, [groups, showKeyboardEvents, showMouseEvents]);
 
   const appearance = useStyleStore((state) => state.appearance);
   const text = useStyleStore((state) => state.text);
@@ -105,8 +122,9 @@ export const KeyOverlay = () => {
     keyIndex > 0 && groupKeyCount > 1;
 
   const renderGroups = (animated: boolean) =>
-    groups.map((group, groupIndex) => {
-      const depth = groups.length - 1 - groupIndex;
+    visibleGroups.map((group, groupIndex) => {
+      // 深度/透明度衰减基于可见组数(被过滤的组不占深度),否则旧组透明度错位
+      const depth = visibleGroups.length - 1 - groupIndex;
       const content = group.keys.map((event, keyIndex) => (
         <Fragment key={event.name}>
           {renderSeparator(keyIndex, group.keys.length) && (
@@ -142,14 +160,14 @@ export const KeyOverlay = () => {
               <Keycap
                 event={event}
                 lastest={group.keys.length - 1 === keyIndex}
-                isPressed={groups.length - 1 === groupIndex && event.in(pressedKeys)}
+                isPressed={visibleGroups.length - 1 === groupIndex && event.in(pressedKeys)}
               />
             </motion.div>
           ) : (
             <Keycap
               event={event}
               lastest={group.keys.length - 1 === keyIndex}
-              isPressed={groups.length - 1 === groupIndex && event.in(pressedKeys)}
+              isPressed={visibleGroups.length - 1 === groupIndex && event.in(pressedKeys)}
             />
           )}
         </Fragment>

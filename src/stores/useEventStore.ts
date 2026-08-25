@@ -1,7 +1,7 @@
 // 事件 store:按键组生命周期、鼠标状态、过滤与快捷键配置
 // 结构与逻辑对齐 Keyviz 的 KeyEventStore
 
-import { EventPayload, KeyEvent, KeyGroup, MODIFIERS, MouseButtonEvent, MouseMoveEvent, MouseWheelEvent, RawKey, RawKeyEvent } from "@/lib/types";
+import { EventPayload, isMouseKey, KeyEvent, KeyGroup, MODIFIERS, MouseButtonEvent, MouseMoveEvent, MouseWheelEvent, RawKey, RawKeyEvent } from "@/lib/types";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { useCompanionStore } from "./useCompanionStore";
@@ -35,6 +35,12 @@ interface EventConfig {
   maxHistory: number;
   lingerDurationMs: number;
   toggleShortcut: string[];
+  /** 设备维度显示开关:键盘按键是否进入键帽流/整键盘(独立于 filter 的内容过滤) */
+  showKeyboardEvents: boolean;
+  /** 设备维度显示开关:鼠标按键(含滚轮/拖拽/侧键)是否以键帽形式显示 */
+  showMouseEvents: boolean;
+  /** 设备维度显示开关:鼠标反馈(点击圆环/涟漪/指示器/移动拖尾)是否显示 */
+  showMouseEffects: boolean;
 }
 
 interface EventRuntime {
@@ -54,6 +60,9 @@ interface EventActions {
   setMaxHistory: (value: number) => void;
   setLingerDurationMs: (value: number) => void;
   setToggleShortcut: (value: string[]) => void;
+  setShowKeyboardEvents: (value: boolean) => void;
+  setShowMouseEvents: (value: boolean) => void;
+  setShowMouseEffects: (value: boolean) => void;
   onEvent: (event: EventPayload) => void;
   onKeyPress: (event: RawKeyEvent) => void;
   ignoreEvent: (pressedKeys: string[]) => boolean;
@@ -79,6 +88,9 @@ export const useEventStore = create<EventStore>()(
       maxHistory: 5,
       lingerDurationMs: 5_000,
       toggleShortcut: [RawKey.ShiftLeft, RawKey.F10],
+      showKeyboardEvents: true,
+      showMouseEvents: true,
+      showMouseEffects: true,
 
       // ─── 运行时 ───
       pressedKeys: [],
@@ -95,6 +107,9 @@ export const useEventStore = create<EventStore>()(
       setMaxHistory: (maxHistory) => set({ maxHistory }),
       setLingerDurationMs: (lingerDurationMs) => set({ lingerDurationMs }),
       setToggleShortcut: (toggleShortcut) => set({ toggleShortcut }),
+      setShowKeyboardEvents: (showKeyboardEvents) => set({ showKeyboardEvents }),
+      setShowMouseEvents: (showMouseEvents) => set({ showMouseEvents }),
+      setShowMouseEffects: (showMouseEffects) => set({ showMouseEffects }),
 
       onEvent: (event) => {
         const state = get();
@@ -132,6 +147,18 @@ export const useEventStore = create<EventStore>()(
         // 1.5 打字伙伴计数(信号解耦):真实新按下即计数,先于显示过滤——
         //     过滤只决定"哪些键显示",不再影响统计与伙伴成长(保活重发在步骤 0 已 return)
         useCompanionStore.getState().registerKey(event.name);
+
+        // 1.6 设备维度门控(逐键判定,与 filter 的组语义正交):
+        //     只决定"该键是否进入显示组";物理状态照常保留(滚轮去重/卡键清理/
+        //     拖拽判定依赖 pressedKeys);registerKey 已在 1.5 完成,统计不受影响。
+        //     不并入 ignoreEvent:那是"整组 pressedKeys.some 任一通过即整组放行"
+        //     的组语义,并入后 filter=modifiers 下先按 Ctrl 再点左键,左键会借
+        //     Ctrl 命中 MODIFIERS 入组显示为 [Ctrl+Left],违背"只要键盘画面"。
+        //     已显示键帽的即时消失由渲染层过滤负责(KeyOverlay visibleGroups)。
+        if ((isMouseKey(event.name) && !state.showMouseEvents) || (!isMouseKey(event.name) && !state.showKeyboardEvents)) {
+          set({ pressedKeys, pressedKeyTimes });
+          return;
+        }
 
         // 2. 过滤(被过滤的键保留物理状态,但不进入任何显示组)
         if (state.filter !== "none" && state.ignoreEvent(pressedKeys)) {

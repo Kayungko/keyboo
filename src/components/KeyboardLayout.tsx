@@ -111,6 +111,8 @@ export const KeyboardLayout = () => {
   const pressedMouseButtons = useEventStore((state) => state.pressedMouseButtons);
   const wheel = useEventStore((state) => state.mouse.wheel);
   const dragging = useEventStore((state) => state.mouse.dragging);
+  const showKeyboardEvents = useEventStore((state) => state.showKeyboardEvents);
+  const showMouseEvents = useEventStore((state) => state.showMouseEvents);
 
   const appearance = useStyleStore((state) => state.appearance);
   const text = useStyleStore((state) => state.text);
@@ -167,31 +169,40 @@ export const KeyboardLayout = () => {
         justifyContent: alignment.justifyContent,
       }}
     >
+      {/* 设备维度分区渲染:本组件读物理状态(pressedKeys/pressedMouseButtons)
+          而非显示组,store 门控对它无效——必须在此条件渲染。
+          键盘显示关 → 主键盘+小键盘消失;鼠标显示关 → 鼠标列消失;都关 → 空白 */}
       <div style={{ display: "flex", gap: unit * 0.5 }}>
         {/* 主键盘区 */}
-        <div style={{ display: "flex", flexDirection: "column", gap }}>
-          {renderRows(MAIN_ROWS)}
-        </div>
+        {showKeyboardEvents && (
+          <div style={{ display: "flex", flexDirection: "column", gap }}>
+            {renderRows(MAIN_ROWS)}
+          </div>
+        )}
         {/* 小键盘 */}
-        <div style={{ display: "flex", flexDirection: "column", gap }}>
-          {renderRows(NUMPAD_ROWS)}
-        </div>
+        {showKeyboardEvents && (
+          <div style={{ display: "flex", flexDirection: "column", gap }}>
+            {renderRows(NUMPAD_ROWS)}
+          </div>
+        )}
         {/* 鼠标列 */}
-        <div style={{ display: "flex", flexDirection: "column", gap, width: unit * 1.6 }}>
-          {MOUSE_KEYS.map((key) => (
-            <LayoutKey
-              key={key.name}
-              name={key.name}
-              width={1.6}
-              pressed={isKeyPressed(key.name)}
-              unit={unit}
-              fontSize={fontSize}
-              colors={colors}
-              textTransform={text.caps}
-              radius={0.5}
-            />
-          ))}
-        </div>
+        {showMouseEvents && (
+          <div style={{ display: "flex", flexDirection: "column", gap, width: unit * 1.6 }}>
+            {MOUSE_KEYS.map((key) => (
+              <LayoutKey
+                key={key.name}
+                name={key.name}
+                width={1.6}
+                pressed={isKeyPressed(key.name)}
+                unit={unit}
+                fontSize={fontSize}
+                colors={colors}
+                textTransform={text.caps}
+                radius={0.5}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

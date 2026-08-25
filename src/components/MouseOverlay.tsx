@@ -19,6 +19,9 @@ export function MouseOverlay() {
   const pressedButtons = useEventStore((s) => s.pressedMouseButtons);
   const pressedButton = pressedButtons.length > 0 ? pressedButtons[pressedButtons.length - 1] : null;
   const wheel = useEventStore((s) => s.mouse.wheel);
+  // 设备维度总门控:常规设置「鼠标反馈」关闭时,圆环/涟漪/指示器整体隐藏,
+  // 鼠标页的 showClicks 等细分开关只在总门控开启时生效
+  const showMouseEffects = useEventStore((s) => s.showMouseEffects);
   const style = useStyleStore((s) => s.mouse);
   const animationDuration = useStyleStore((s) => s.appearance.animationDuration);
 
@@ -73,7 +76,7 @@ export function MouseOverlay() {
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
   }, []);
 
-  const shouldRender = style.showClicks || style.keepHighlight || style.showIndicator;
+  const shouldRender = showMouseEffects && (style.showClicks || style.keepHighlight || style.showIndicator);
 
   // 订阅鼠标坐标,直写 DOM transform,避免高频 React 重渲染。
   // 订阅建立时先应用一次当前坐标,避免组件重新挂载后停在左上角。

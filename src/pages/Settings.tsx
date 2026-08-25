@@ -70,6 +70,7 @@ export default function Settings() {
       startSyncSender(EVENT_STORE_NAME, useEventStore, [
         "filter", "allowedKeys", "showEventHistory", "maxHistory", "lingerDurationMs",
         "dragThreshold", "toggleShortcut",
+        "showKeyboardEvents", "showMouseEvents", "showMouseEffects",
       ]),
       startSyncSender(STYLE_STORE_NAME, useStyleStore, [
         "appearance", "layout", "color", "modifier", "text", "border", "background", "mouse",

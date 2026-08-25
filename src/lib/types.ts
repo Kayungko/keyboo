@@ -181,6 +181,23 @@ export class KeyEvent {
   }
 }
 
+// 鼠标虚拟键全集(含侧键 Other):设备维度显示门控的唯一真源。
+// KeyEvent.isMouseVirtual() 不含 "Other",直接复用会漏拦侧键
+// (X1/X2 经后端 WM_XBUTTONDOWN 以 button:"Other" 进入显示链路)。
+export const MOUSE_VIRTUAL_KEYS = new Set<string>([
+  RawKey.Left,
+  RawKey.Middle,
+  RawKey.Right,
+  RawKey.ScrollUp,
+  RawKey.ScrollDown,
+  RawKey.Drag,
+  "Other",
+]);
+
+export function isMouseKey(name: string): boolean {
+  return MOUSE_VIRTUAL_KEYS.has(name);
+}
+
 export interface KeyGroup {
   keys: KeyEvent[];
   createdAt: number;

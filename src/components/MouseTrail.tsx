@@ -17,6 +17,8 @@ export const MouseTrail = () => {
   const trailColor = useStyleStore((state) => state.mouse.trailColor);
   const trailWidth = useStyleStore((state) => state.mouse.trailWidth);
   const trailFadeMs = useStyleStore((state) => state.mouse.trailFadeMs);
+  // 设备维度总门控:常规设置「鼠标反馈」关闭时拖尾一并隐藏
+  const showMouseEffects = useEventStore((state) => state.showMouseEffects);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pointsRef = useRef<TrailPoint[]>([]);
@@ -24,7 +26,7 @@ export const MouseTrail = () => {
   useEffect(() => {
     // showTrail 必须在依赖里:关闭后 canvas 卸载,重开时 effect 需重建,
     // 否则 ctx 仍指向旧 canvas,轨迹永不显示
-    if (!showTrail) return;
+    if (!showTrail || !showMouseEffects) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
@@ -90,9 +92,9 @@ export const MouseTrail = () => {
       window.removeEventListener("resize", resize);
       pointsRef.current = [];
     };
-  }, [showTrail, trailColor, trailWidth, trailFadeMs]);
+  }, [showTrail, showMouseEffects, trailColor, trailWidth, trailFadeMs]);
 
-  if (!showTrail) return null;
+  if (!showTrail || !showMouseEffects) return null;
 
   return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />;
 };
