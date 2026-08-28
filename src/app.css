@@ -495,7 +495,8 @@
   --note-font-mono: "Cascadia Code", Consolas, "Courier New", monospace;
   position: relative;
   box-sizing: border-box;
-  width: 292px;
+  /* 宽度可拖拽调整(右缘热区),React 内联 style 注入 --note-width */
+  width: var(--note-width, 292px);
   padding: 0;
   border: 1px solid var(--note-border);
   border-radius: 8px;
@@ -513,6 +514,29 @@
 }
 .note-card.is-pinned {
   border-color: color-mix(in srgb, var(--note-accent) 42%, var(--note-border));
+}
+/* 拖宽热区:卡片左缘窄条(便签落位屏幕右上角,向左生长不出屏),
+   hover 亮出可拖暗示;层级低于弹出菜单(z-index 20) */
+.note-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 5px;
+  z-index: 15;
+  cursor: ew-resize;
+  touch-action: none;
+  border-radius: 8px 0 0 8px;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+.note-resize-handle:hover,
+.note-resize-handle:focus-visible {
+  background: color-mix(in srgb, var(--note-accent) 30%, transparent);
+}
+.note-resize-handle:focus-visible {
+  outline: none;
+  box-shadow: inset 2px 0 0 var(--note-accent);
 }
 .note-card.is-hiding,
 .note-card.is-restoring {

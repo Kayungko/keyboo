@@ -188,7 +188,7 @@ fn position_note_window(
         .ok_or_else(|| "no monitor found".to_string())?;
     let scale = monitor.scale_factor();
     let margin = (24.0 * scale) as i32;
-    let win_w = (292.0 * scale) as i32;
+    let win_w = (read_note_width(app) * scale) as i32;
     let pos = monitor.position();
     let size = monitor.size();
     window
@@ -209,6 +209,21 @@ fn read_note_pinned(app: &tauri::AppHandle) -> bool {
         .unwrap_or(true)
 }
 
+/// 便签宽度的落盘下限/上限(逻辑像素):下限 = 原始设计宽,上限防拉成横幅
+const NOTE_WIDTH_MIN: f64 = 292.0;
+const NOTE_WIDTH_MAX: f64 = 560.0;
+
+/// 便签宽度读取路径:Rust 独占条目 keyboo-note-width,无值时默认原设计宽
+fn read_note_width(app: &tauri::AppHandle) -> f64 {
+    use tauri_plugin_store::StoreExt;
+    app.store("keyboo.json")
+        .ok()
+        .and_then(|store| store.get("keyboo-note-width"))
+        .and_then(|value| value.as_f64())
+        .map(|w| w.clamp(NOTE_WIDTH_MIN, NOTE_WIDTH_MAX))
+        .unwrap_or(NOTE_WIDTH_MIN)
+}
+
 /// 创建便签窗口(照抄 settings 窗口模式,但常驻:禁用时只 hide 不销毁,
 /// 保住 webview 内存态,重新启用无闪烁)。显示由前端首帧后触发(show_note_window)。
 fn create_note_window(app: &tauri::AppHandle) -> Result<(), String> {
@@ -220,7 +235,7 @@ fn create_note_window(app: &tauri::AppHandle) -> Result<(), String> {
     let url = tauri::WebviewUrl::App("index.html#/note".into());
     let window = WebviewWindowBuilder::new(app, "note", url)
         .title("Keyboo 便签")
-        .inner_size(292.0, 320.0)
+        .inner_size(read_note_width(app), 320.0)
         .resizable(false)
         .decorations(false)
         .transparent(true)
@@ -361,10 +376,13 @@ fn save_note_position(app: tauri::AppHandle) -> Result<(), String> {
 /// - generation:代际计数,新 resize 请求自增,旧动画线程发现失配即自杀
 /// - current_height:上次设定的高度(逻辑像素)。动画线程逐帧回写,
 ///   新请求从「屏幕上真实呈现的高度」续接,打断不跳变
+/// - width:当前窗口宽度(逻辑像素)。拖宽实时更新内存,松手才落盘;
+///   高度动画线程每帧从这里读,避免拖宽期间动画把窗口缩回旧宽
 #[derive(Default)]
 struct NoteResizeState {
     generation: u64,
     current_height: Option<f64>,
+    width: f64,
 }
 
 /// 便签内容高度变化时由前端调用自适应窗口高度。
@@ -382,18 +400,19 @@ fn resize_note_window(app: tauri::AppHandle, height: f64, animate: bool) -> Resu
     let state = app.state::<Mutex<NoteResizeState>>();
     let (generation, start) = {
         let mut s = state.lock().unwrap();
+        let width = s.width;
         if !animate {
             s.generation += 1;
             s.current_height = Some(target);
             window
-                .set_size(tauri::LogicalSize::new(292.0, target))
+                .set_size(tauri::LogicalSize::new(width, target))
                 .map_err(|e| e.to_string())?;
             return Ok(());
         }
         // 首次调用(无记录)直接落位:开窗首跳与旧行为一致,不额外放大动画
         if s.current_height.is_none() {
             window
-                .set_size(tauri::LogicalSize::new(292.0, target))
+                .set_size(tauri::LogicalSize::new(width, target))
                 .map_err(|e| e.to_string())?;
             s.current_height = Some(target);
             return Ok(());
@@ -409,7 +428,7 @@ fn resize_note_window(app: tauri::AppHandle, height: f64, animate: bool) -> Resu
     std::thread::spawn(move || {
         let mut elapsed_ms: f64 = 0.0;
         loop {
-            let h = {
+            let (h, width) = {
                 let state = app.state::<Mutex<NoteResizeState>>();
                 let mut s = state.lock().unwrap();
                 // 新请求已接管,让位退出(当前高度由新线程续写)
@@ -420,15 +439,20 @@ fn resize_note_window(app: tauri::AppHandle, height: f64, animate: bool) -> Resu
                 let p = 1.0 - (1.0 - t).powi(3);
                 let h = start + (target - start) * p;
                 s.current_height = Some(h);
-                h
+                (h, s.width)
             };
             let Some(w) = app.get_webview_window("note") else {
                 return;
             };
-            let _ = w.set_size(tauri::LogicalSize::new(292.0, h));
+            let _ = w.set_size(tauri::LogicalSize::new(width, h));
             if elapsed_ms >= duration_ms {
                 // 收尾精确落位,消除帧间舍入残差
-                let _ = w.set_size(tauri::LogicalSize::new(292.0, target));
+                let width = {
+                    let state = app.state::<Mutex<NoteResizeState>>();
+                    let x = state.lock().unwrap().width;
+                    x
+                };
+                let _ = w.set_size(tauri::LogicalSize::new(width, target));
                 let state = app.state::<Mutex<NoteResizeState>>();
                 let mut s = state.lock().unwrap();
                 if s.generation == generation {
@@ -441,6 +465,103 @@ fn resize_note_window(app: tauri::AppHandle, height: f64, animate: bool) -> Resu
         }
     });
     Ok(())
+}
+
+/// 便签宽度:前端左缘热区拖拽调用。拖拽中 save=false 只改内存并 set_size 跟手;
+/// 松手 save=true 落盘到 keyboo-note-width,重启由 create_note_window 恢复。
+/// 左缘锚定语义:向左生长,右缘不动——set_size 默认以左上角为原点向右扩,
+/// 这里按宽度增量左移 x 补偿位置,并钳制到虚拟屏(左边没空间时退化为向右生长)。
+#[tauri::command]
+fn set_note_width(app: tauri::AppHandle, width: f64, save: bool) -> Result<(), String> {
+    let window = app
+        .get_webview_window("note")
+        .ok_or_else(|| "note window not found".to_string())?;
+    let target = width.clamp(NOTE_WIDTH_MIN, NOTE_WIDTH_MAX);
+    let state = app.state::<Mutex<NoteResizeState>>();
+    let (old_width, height) = {
+        let mut s = state.lock().unwrap();
+        let old = s.width;
+        s.width = target;
+        (old, s.current_height)
+    };
+    // 无高度记录(开窗后还没发生过高度自适应)时读窗口实际逻辑高度
+    let height = match height {
+        Some(h) => h,
+        None => {
+            let scale = window.scale_factor().map_err(|e| e.to_string())?;
+            window
+                .inner_size()
+                .map(|size| size.to_logical::<f64>(scale).height)
+                .map_err(|e| e.to_string())?
+        }
+    };
+    // 位置补偿 + 原子应用:宽度增量换算物理像素,x 左移;虚拟屏左界外钳制(右缘随之右移)。
+    // 位置与尺寸合并为一次 SetWindowPos:分两次调用会在两步之间闪一下右缘
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let grow = ((target - old_width) * scale).round() as i32;
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let new_phys = tauri::PhysicalSize::new(
+        (target * scale).round() as u32,
+        (height * scale).round() as u32,
+    );
+    let clamped = clamp_to_virtual_screen(
+        tauri::PhysicalPosition::new(pos.x - grow, pos.y),
+        new_phys,
+    );
+    let applied = {
+        #[cfg(target_os = "windows")]
+        {
+            use windows::Win32::UI::WindowsAndMessaging::{
+                SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
+            };
+            match window.hwnd() {
+                Ok(hwnd) => unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        None,
+                        clamped.x,
+                        clamped.y,
+                        new_phys.width as i32,
+                        new_phys.height as i32,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
+                    )
+                    .is_ok()
+                },
+                Err(_) => false,
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            false
+        }
+    };
+    if !applied {
+        let _ = window.set_position(clamped);
+        window
+            .set_size(tauri::LogicalSize::new(target, height))
+            .map_err(|e| e.to_string())?;
+    }
+    if save {
+        use tauri_plugin_store::StoreExt;
+        let store = app.store("keyboo.json").map_err(|e| e.to_string())?;
+        store.set("keyboo-note-width", serde_json::json!(target));
+        store.save().map_err(|e| e.to_string())?;
+        // 位置被左移补偿改过:一并落盘(set_position 不保证触发前端 onMoved)
+        let _ = save_note_position(app);
+    }
+    Ok(())
+}
+
+/// 前端首帧读取便签宽度(内容卡片跟随窗口宽度自适应)
+#[tauri::command]
+fn get_note_width(app: tauri::AppHandle) -> f64 {
+    let state = app.state::<Mutex<NoteResizeState>>();
+    let w = state.lock().unwrap().width;
+    if w > 0.0 {
+        w
+    } else {
+        read_note_width(&app)
+    }
 }
 
 
@@ -559,8 +680,11 @@ pub fn run() {
 
             // 全局状态
             app.manage(Mutex::new(AppState::new(&app_handle)));
-            // 便签高度动画状态(见 resize_note_window)
-            app.manage(Mutex::new(NoteResizeState::default()));
+            // 便签高度动画状态(见 resize_note_window);宽度从持久化条目恢复
+            app.manage(Mutex::new(NoteResizeState {
+                width: read_note_width(&app_handle),
+                ..Default::default()
+            }));
 
             // 托盘菜单
             let toggle_item = MenuItem::with_id(app, "toggle", "暂停", true, None::<&str>)?;
@@ -791,7 +915,9 @@ pub fn run() {
             get_note_pinned,
             show_note_window,
             save_note_position,
-            resize_note_window
+            resize_note_window,
+            set_note_width,
+            get_note_width
         ])
         .run(tauri::generate_context!())
         .expect("error while running Keyboo");

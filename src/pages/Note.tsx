@@ -17,6 +17,10 @@ import { useNoteStore, type TodoItem, type Topic } from "@/stores/useNoteStore";
 const MAX_TEXT = 42;
 /** 每页条数:列表区 max-height 320px,每行 36px+2px 间距,8 条=302px 恰好放下 */
 const PAGE_SIZE = 8;
+/** 便签宽度钳制(逻辑像素):下限=原始设计宽,上限与 Rust 侧 NOTE_WIDTH_* 一致 */
+const NOTE_WIDTH_MIN = 292;
+const NOTE_WIDTH_MAX = 560;
+const NOTE_WIDTH_DEFAULT = 292;
 
 /** 勾选完成的爪印标记(强调色填充,轻度伙伴元素) */
 function PawMark() {
@@ -159,6 +163,8 @@ export function Note() {
     window.matchMedia("(prefers-reduced-motion: reduce)").matches,
   );
   const [pinned, setPinned] = useState(true);
+  /** 便签宽度(逻辑像素):事实源在 Rust,启动拉取,拖右缘热区实时推送 */
+  const [noteWidth, setNoteWidth] = useState(NOTE_WIDTH_DEFAULT);
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [view, setView] = useState<NoteView>("active");
   const [page, setPage] = useState(1);
@@ -172,12 +178,20 @@ export function Note() {
   } | null>(null);
 
   const archiveBtnRef = useRef<HTMLButtonElement>(null);
+  /** 拖宽会话:pointerId + 起始屏幕 x + 起始宽度;rAF 合并高频 pointermove */
+  const widthDragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
+  const widthRafRef = useRef(0);
+  /** 上次上报给 Rust 的高度:宽度变化也会触发 ResizeObserver,高度没变就不必再发 */
+  const lastHeightRef = useRef(0);
 
   // 恢复钉住态(Rust 独占条目 keyboo-note-pinned,默认 true);
   // 同窗口生命周期内不再变化:钉住切换只发生在本窗口按钮上
   useEffect(() => {
     invoke<boolean>("get_note_pinned")
       .then((value) => setPinned(value))
+      .catch(() => {});
+    invoke<number>("get_note_width")
+      .then((value) => setNoteWidth(value))
       .catch(() => {});
   }, []);
 
@@ -248,13 +262,19 @@ export function Note() {
   useEffect(() => {
     const card = cardRef.current;
     if (!card) return;
+    // 本 effect 随 collapsed/moreOpen 重建:清零去重基准,保证重建后必发一次高度请求
+    // (条幅态卡片高度恒 52,靠 forceHeight 分支扩窗,纯高度去重会误吞)
+    lastHeightRef.current = 0;
     let timer: number | null = null;
     const observer = new ResizeObserver((entries) => {
       const height =
         entries[0]?.borderBoxSize?.[0]?.blockSize ?? card.getBoundingClientRect().height;
+      // 高度没变(纯宽度变化,如拖宽)不必再发窗口高度请求
+      if (Math.abs(height - lastHeightRef.current) < 0.5) return;
       if (timer) clearTimeout(timer);
       timer = window.setTimeout(() => {
         const targetHeight = collapsed && moreOpen ? Math.max(height, 156) : height;
+        lastHeightRef.current = height;
         invoke("resize_note_window", { height: targetHeight, animate: !reducedMotion }).catch(() => {});
       }, 100);
     });
@@ -292,6 +312,58 @@ export function Note() {
   const startDrag = (event: React.PointerEvent<HTMLElement>) => {
     if ((event.target as HTMLElement).closest("button")) return;
     void getCurrentWindow().startDragging().catch(() => {});
+  };
+
+  // ── 拖宽便签:卡片左缘热区,向左拖 = 变宽 ──
+  // 便签落位屏幕右上角,向左生长右缘不动、不出屏;位置补偿由 Rust 侧完成。
+  // 拖拽中 save=false 只推内存实时 set_size 跟手(rAF 合并高频 pointermove),
+  // 松手 save=true 落盘 keyboo-note-width,重启恢复
+  const onResizeHandlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    widthDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.screenX,
+      startWidth: noteWidth,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const onResizeHandlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = widthDragRef.current;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    // 屏幕坐标算增量:窗口自身在鼠标底下移动不会改变 screenX,
+    // 断掉「窗口左移 → clientX 自变 → 重算宽度」的反馈抖动回路
+    const next = Math.round(
+      Math.max(
+        NOTE_WIDTH_MIN,
+        Math.min(NOTE_WIDTH_MAX, drag.startWidth + drag.startX - event.screenX),
+      ),
+    );
+    if (next === noteWidth) return;
+    setNoteWidth(next);
+    cancelAnimationFrame(widthRafRef.current);
+    widthRafRef.current = requestAnimationFrame(() => {
+      invoke("set_note_width", { width: next, save: false }).catch(() => {});
+    });
+  };
+
+  const onResizeHandlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = widthDragRef.current;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    widthDragRef.current = null;
+    cancelAnimationFrame(widthRafRef.current);
+    invoke("set_note_width", { width: noteWidth, save: true }).catch(() => {});
+  };
+
+  // 键盘可达:← 左缘外推变宽,→ 收窄(与拖拽同一落盘路径)
+  const onResizeHandleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = event.key === "ArrowLeft" ? 16 : event.key === "ArrowRight" ? -16 : 0;
+    if (!step) return;
+    event.preventDefault();
+    const next = Math.max(NOTE_WIDTH_MIN, Math.min(NOTE_WIDTH_MAX, noteWidth + step));
+    if (next === noteWidth) return;
+    setNoteWidth(next);
+    invoke("set_note_width", { width: next, save: true }).catch(() => {});
   };
 
   // ── 视图与分页 ──
@@ -559,9 +631,10 @@ export function Note() {
     }
   };
 
-  // ── 拖动排序:序号键帽即把手,FLIP 让位(仅主列表平铺待办行) ──
+  // ── 拖动排序:序号键帽即把手,FLIP 让位(平铺待办行与主题子视图步骤行) ──
   // 拖动中不触发 React 重渲染,平移与序号变号直接改 DOM;
-  // 松手时先关让位过渡再清 transform,让重排与清场同帧落地(无回弹)
+  // 松手时先关让位过渡再清 transform,让重排与清场同帧落地(无回弹);
+  // 落盘统一走 reorderTodo:store 侧按目标归属(平铺/某主题子序列)各自重排
 
   const rowsOf = () =>
     Array.from(listRef.current?.querySelectorAll<HTMLElement>(".todo-row") ?? []);
@@ -850,7 +923,12 @@ export function Note() {
     <div
       className={cardClassName}
       ref={cardRef}
-      style={{ "--note-accent": accentColor } as React.CSSProperties}
+      style={
+        {
+          "--note-accent": accentColor,
+          "--note-width": `${noteWidth}px`,
+        } as React.CSSProperties
+      }
     >
       <header className="note-head" onPointerDown={startDrag}>
         <div className="note-head-text">
@@ -1040,6 +1118,21 @@ export function Note() {
           </div>
         </div>
       </div>
+
+      {/* 拖宽热区:卡片左缘窄条(右上角锚定,向左生长),层级低于弹出菜单 */}
+      <div
+        className="note-resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="拖动调整便签宽度(左右方向键微调)"
+        title="拖动调整宽度"
+        tabIndex={0}
+        onPointerDown={onResizeHandlePointerDown}
+        onPointerMove={onResizeHandlePointerMove}
+        onPointerUp={onResizeHandlePointerUp}
+        onPointerCancel={onResizeHandlePointerUp}
+        onKeyDown={onResizeHandleKeyDown}
+      />
 
       {moreOpen && (
         <div

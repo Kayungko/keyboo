@@ -44,7 +44,7 @@ interface NoteActions {
   removeTodo: (id: string) => void;
   /** 行内编辑:trim 后为空时不变更(调用方视为取消) */
   updateTodo: (id: string, text: string) => void;
-  /** 拖动排序:把 id 移动到 toIndex(越界时钳制);仅在平铺待办间有效 */
+  /** 拖动排序:把 id 移动到 toIndex(越界时钳制);平铺待办按平铺序、主题子待办按所在主题子序各自重排 */
   reorderTodo: (id: string, toIndex: number) => void;
   addTopic: (title: string) => string;
   /** 主题改名:trim 后为空时不变更 */
@@ -131,7 +131,24 @@ export const useNoteStore = create<NoteStore>()(
 
       reorderTodo: (id, toIndex) =>
         set((state) => {
-          // 仅平铺待办间排序:主题子待办顺序即创建序,不提供拖动
+          const target = state.todos.find((t) => t.id === id);
+          if (!target) return state;
+          // 主题子待办:在所在主题的子序列内重排;平铺待办与其它主题的相对顺序不变
+          if (target.topicId) {
+            const siblings = state.todos.filter((t) => t.topicId === target.topicId);
+            const from = siblings.findIndex((t) => t.id === id);
+            if (from < 0 || from === toIndex) return state;
+            const next = siblings.slice();
+            const [moved] = next.splice(from, 1);
+            next.splice(Math.max(0, Math.min(toIndex, next.length)), 0, moved);
+            let cursor = 0;
+            return {
+              todos: state.todos.map((t) =>
+                t.topicId === target.topicId ? next[cursor++] : t,
+              ),
+            };
+          }
+          // 平铺待办间排序
           const flat = state.todos.filter((t) => !t.topicId);
           const from = flat.findIndex((t) => t.id === id);
           if (from < 0 || from === toIndex) return state;
