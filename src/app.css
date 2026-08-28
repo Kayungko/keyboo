@@ -545,12 +545,57 @@
   align-items: center;
   gap: 6px;
 }
+/* 进度徽章:纯数据展示(2/5),不再承担视图切换 */
 .note-progress {
   flex: none;
+  padding: 2px 6px;
   color: var(--note-muted);
   font-family: var(--note-font-mono);
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
+}
+/* 收纳盒入口:与图钉同款交互语言(hover 回亮/激活态强调色) */
+.note-archive {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--note-muted);
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    border-color 0.16s ease,
+    background-color 0.16s ease;
+}
+.note-archive:hover,
+.note-archive:focus-visible {
+  color: var(--note-text);
+  border-color: var(--note-border);
+}
+.note-archive:focus-visible {
+  outline: 2px solid var(--note-accent);
+  outline-offset: 1px;
+}
+.note-archive:active {
+  transform: scale(0.92);
+}
+.note-archive svg {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+}
+.note-archive svg .icon-stroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-linejoin: round;
+}
+/* 收纳表视图态:强调色示意当前位置 */
+.note-archive.is-active {
+  color: var(--note-accent);
 }
 .note-pin {
   display: grid;
@@ -625,11 +670,26 @@
 }
 .todo-row {
   display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) auto;
+  grid-template-columns: 20px 20px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-height: 36px;
   padding: 2px 0;
+  user-select: none;
+}
+/* 拖动让位过渡只存在于排序进行中,松手清场时先摘除本类避免回弹 */
+.todo-list.is-reordering .todo-row:not(.is-dragging) {
+  transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+/* 被抓起的行:悬浮卡,负 margin 撑开底板但内容对齐不变。
+   扁平化:拖动行影减淡到 2px 微影,悬浮感来自背景衬底而非投影 */
+.todo-row.is-dragging {
+  z-index: 1;
+  padding-inline: 5px;
+  margin-inline: -5px;
+  border-radius: 6px;
+  background: var(--note-bg);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 .todo-check {
   width: 18px;
@@ -658,6 +718,58 @@
 .todo-row.is-done .todo-check:hover {
   border-color: transparent;
 }
+/* 序号键帽 = 拖动把手。三态借用键帽触觉语言:
+   平放(默认) → 抬起(hover 松键) → 按下(已完成 = 这颗键敲过了)。
+   零模糊壁影来自产品 PBT 键帽双层结构,非通用投影。 */
+.todo-keycap {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--note-border);
+  border-radius: 5px;
+  background: #26282d;
+  color: var(--note-muted);
+  font-family: var(--note-font-mono);
+  font-size: 10px;
+  line-height: 1;
+  cursor: grab;
+  touch-action: none;
+  /* 扁平化:1px 壁影仅存键帽厚度暗示,不再是双层结构投影 */
+  box-shadow: 0 1px 0 #0f1013;
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.12s ease,
+    color 0.12s ease,
+    border-color 0.12s ease;
+}
+.todo-keycap:hover {
+  color: var(--note-text);
+  border-color: #4a4d54;
+  /* 扁平化:hover 不再位移抬升,只亮一档 */
+  transform: translateY(0);
+  box-shadow: 0 1px 0 #0f1013;
+}
+.todo-keycap:focus-visible {
+  outline: 2px solid var(--note-accent);
+  outline-offset: 2px;
+}
+.todo-keycap:active {
+  cursor: grabbing;
+}
+/* 完成态:键被按下——帽体贴底,壁影消失(平到底了) */
+.todo-row.is-done .todo-keycap {
+  background: #212327;
+  color: #6b6e75;
+  transform: translateY(1px);
+  box-shadow: 0 0 0 #0f1013;
+}
+.todo-row.is-done .todo-keycap:hover {
+  transform: translateY(1px);
+  box-shadow: 0 0 0 #0f1013;
+}
 .todo-paw {
   width: 15px;
   height: 15px;
@@ -673,6 +785,21 @@
   line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: text;
+}
+/* 行内编辑:原位换输入框,强调色底线标示编辑态 */
+.todo-edit {
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--note-accent);
+  outline: 0;
+  background: transparent;
+  color: var(--note-text);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  user-select: text;
 }
 .todo-row.is-done .todo-text {
   color: var(--note-muted);
@@ -702,10 +829,14 @@
 
 .todo-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 8px;
   padding-top: 10px;
   border-top: 1px solid var(--note-border);
+}
+/* 主题子视图内无类型切换,回两列(首列塌缩) */
+.todo-form:not(:has(.todo-compose)) {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 .todo-input,
 .todo-add {
@@ -736,12 +867,299 @@
   font-size: 0.75rem;
   font-weight: 600;
   cursor: pointer;
+  /* 扁平化:主操作键同样只留 1px 壁影 */
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
 }
 .todo-empty {
   padding: 12px 0;
   color: var(--note-muted);
   font-size: 0.8125rem;
   text-align: center;
+}
+
+/* 收纳表行:时间列替序号键帽(时间序即语义,禁拖动),列宽随内容自适应 */
+.todo-list.is-archive .todo-row {
+  grid-template-columns: 20px auto minmax(0, 1fr) auto;
+}
+/* 收纳表中的主题行:无时间列也保持 3 段(check+空格键+删除) */
+.todo-list.is-archive .todo-row.topic-row {
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+}
+.todo-time {
+  color: var(--note-muted);
+  font-family: var(--note-font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── 主题行:空格键 ───
+   键盘上最长的键 = 跨多天的长期项目。主题名刻在键帽上,
+   右端 n/m 进度。扁平化语言:1px 壁影、hover 亮一档不位移 */
+.todo-row.topic-row {
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+}
+.todo-topic-keycap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--note-border);
+  border-radius: 6px;
+  background: #26282d;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  box-shadow: 0 1px 0 #0f1013;
+  transition:
+    border-color 0.12s ease,
+    background 0.12s ease;
+}
+.todo-topic-keycap:hover {
+  border-color: #4a4d54;
+}
+.todo-topic-keycap:focus-visible {
+  outline: 2px solid var(--note-accent);
+  outline-offset: 2px;
+}
+/* 收纳表中的主题:按下态(这颗键敲完了)——贴底、壁影消失、去交互 */
+.todo-topic-keycap.is-pressed {
+  background: #212327;
+  transform: translateY(1px);
+  box-shadow: none;
+  cursor: default;
+}
+.todo-topic-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--note-text);
+  font-size: 0.8125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.todo-topic-keycap.is-pressed .todo-topic-title {
+  color: var(--note-muted);
+}
+.todo-topic-count {
+  flex: none;
+  color: var(--note-muted);
+  font-family: var(--note-font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 主题子视图头部:返回键 + 主题名 + 步骤进度 */
+.note-back {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--note-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--note-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    border-color 0.16s ease;
+}
+.note-back:hover,
+.note-back:focus-visible {
+  color: var(--note-text);
+  border-color: #4a4d54;
+}
+.note-back:focus-visible {
+  outline: none;
+}
+.note-topic-progress {
+  flex: none;
+  color: var(--note-accent);
+  font-family: var(--note-font-mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 输入框类型切换:待办/主题。键帽小开关语言 */
+.todo-compose {
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--note-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--note-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition:
+    color 0.16s ease,
+    border-color 0.16s ease,
+    background 0.16s ease;
+}
+.todo-compose:hover {
+  color: var(--note-text);
+}
+.todo-compose:focus-visible {
+  outline: 2px solid var(--note-accent);
+  outline-offset: 1px;
+}
+.todo-compose.topic {
+  border-color: var(--note-accent);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--note-accent);
+}
+
+/* 页码条:仅超过一页时渲染;等宽小字居中,与整体克制的键帽语言一致 */
+.todo-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 2px 0 6px;
+}
+.todo-pager button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--note-muted);
+  font-family: var(--note-font-mono);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.todo-pager button:hover:not(:disabled) {
+  color: var(--note-text);
+  background: rgba(255, 255, 255, 0.06);
+}
+.todo-pager button:focus-visible {
+  outline: 2px solid var(--note-accent);
+  outline-offset: 1px;
+}
+.todo-pager button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.todo-pager-num {
+  color: var(--note-muted);
+  font-family: var(--note-font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── 翻页/视图切换过渡:方向感知滑动 ───
+   dir=1(下一页/进收纳):新页自右滑入,旧页向左滑出;dir=-1 反向。
+   旧页是绝对定位的静态快照,不约束高度(短页换长页时不裁切) */
+.todo-list-wrap {
+  position: relative;
+}
+.todo-list.is-entering {
+  animation: note-page-in 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.todo-list.is-leaving {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  max-height: none;
+  overflow: visible;
+  pointer-events: none;
+  animation: note-page-out 180ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+/* 离场快照内的爪印不重放弹出动画(收纳视图切换时的杂讯) */
+.todo-list.is-leaving .todo-paw {
+  animation: none;
+}
+@keyframes note-page-in {
+  from {
+    transform: translateX(calc(var(--page-dir, 1) * 24px));
+    opacity: 0;
+  }
+}
+@keyframes note-page-out {
+  to {
+    transform: translateX(calc(var(--page-dir, 1) * -24px));
+    opacity: 0;
+  }
+}
+
+/* 头部视图切换:标题块淡入上浮(180ms,与列表滑动同一节奏) */
+.note-swap {
+  animation: note-swap-in 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@keyframes note-swap-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+}
+
+/* ─── 收纳飞行:完成的键帽克隆体飞向收纳盒 ───
+   挂在卡片内继承 --note-* 变量;position: fixed 相对视口,fixed 定位不受
+   卡片内布局影响。位移由 WAAPI 驱动(TSX flyToArchive),这里只管出身位 */
+.todo-fly-ghost {
+  position: fixed;
+  z-index: 10;
+  margin: 0;
+  pointer-events: none;
+  cursor: default;
+}
+/* 收纳盒吞咽脉冲:幽灵到达时刻的一次性反馈(快速涨缩,无回弹) */
+.note-archive.is-gulp {
+  color: var(--note-accent);
+  animation: note-archive-gulp 220ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@keyframes note-archive-gulp {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 去位移,保留淡入淡出 */
+  .todo-list.is-entering {
+    animation: note-fade-in 0.18s ease;
+  }
+  .todo-list.is-leaving {
+    animation: note-fade-out 0.18s ease both;
+  }
+  .note-swap {
+    animation: note-fade-in 0.16s ease;
+  }
+  .note-archive.is-gulp {
+    /* 只留强调色一闪(color 过渡已由基类覆盖) */
+    animation: none;
+  }
+}
+@keyframes note-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes note-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* 便签窗口:固定 292px 内容,窗口 resize 过渡期 DPI 亚像素差会瞬间触发
+   html 级滚动条(横竖双向闪现)。整窗禁滚——列表区自带 overflow-y: auto */
+html:has(.note-card),
+body:has(.note-card) {
+  overflow: hidden;
 }
 
 @keyframes note-paw-pop {

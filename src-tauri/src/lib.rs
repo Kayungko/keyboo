@@ -356,17 +356,80 @@ fn save_note_position(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 便签高度动画的共享状态:
+/// - generation:代际计数,新 resize 请求自增,旧动画线程发现失配即自杀
+/// - current_height:上次设定的高度(逻辑像素)。动画线程逐帧回写,
+///   新请求从「屏幕上真实呈现的高度」续接,打断不跳变
+#[derive(Default)]
+struct NoteResizeState {
+    generation: u64,
+    current_height: Option<f64>,
+}
+
 /// 便签内容高度变化时由前端调用自适应窗口高度。
 /// set_size 固定左上角原点,顶部锚定的便签向下生长,语义正确。
+/// 高度插值动画(约 180ms 三次 ease-out):窗口边框跟着内容平滑生长/收缩,
+/// 消除「内容先跳、100ms 后窗口底边再跳」的双跳观感。
 #[tauri::command]
 fn resize_note_window(app: tauri::AppHandle, height: f64) -> Result<(), String> {
     let window = app
         .get_webview_window("note")
         .ok_or_else(|| "note window not found".to_string())?;
-    let height = height.clamp(200.0, 800.0);
-    window
-        .set_size(tauri::LogicalSize::new(292.0, height))
-        .map_err(|e| e.to_string())?;
+    let target = height.clamp(200.0, 800.0);
+
+    let state = app.state::<Mutex<NoteResizeState>>();
+    let (generation, start) = {
+        let mut s = state.lock().unwrap();
+        // 首次调用(无记录)直接落位:开窗首跳与旧行为一致,不额外放大动画
+        if s.current_height.is_none() {
+            window
+                .set_size(tauri::LogicalSize::new(292.0, target))
+                .map_err(|e| e.to_string())?;
+            s.current_height = Some(target);
+            return Ok(());
+        }
+        let start = s.current_height.unwrap_or(target);
+        s.generation += 1;
+        (s.generation, start)
+    };
+
+    // 帧循环:约 16ms 一帧,总时长 180ms,三次 ease-out(与前端强 ease-out 曲线同族)
+    let duration_ms: f64 = 180.0;
+    let step_ms: u64 = 16;
+    std::thread::spawn(move || {
+        let mut elapsed_ms: f64 = 0.0;
+        loop {
+            let h = {
+                let state = app.state::<Mutex<NoteResizeState>>();
+                let mut s = state.lock().unwrap();
+                // 新请求已接管,让位退出(当前高度由新线程续写)
+                if s.generation != generation {
+                    return;
+                }
+                let t = (elapsed_ms / duration_ms).min(1.0);
+                let p = 1.0 - (1.0 - t).powi(3);
+                let h = start + (target - start) * p;
+                s.current_height = Some(h);
+                h
+            };
+            let Some(w) = app.get_webview_window("note") else {
+                return;
+            };
+            let _ = w.set_size(tauri::LogicalSize::new(292.0, h));
+            if elapsed_ms >= duration_ms {
+                // 收尾精确落位,消除帧间舍入残差
+                let _ = w.set_size(tauri::LogicalSize::new(292.0, target));
+                let state = app.state::<Mutex<NoteResizeState>>();
+                let mut s = state.lock().unwrap();
+                if s.generation == generation {
+                    s.current_height = Some(target);
+                }
+                return;
+            }
+            elapsed_ms += step_ms as f64;
+            std::thread::sleep(std::time::Duration::from_millis(step_ms));
+        }
+    });
     Ok(())
 }
 
@@ -486,6 +549,8 @@ pub fn run() {
 
             // 全局状态
             app.manage(Mutex::new(AppState::new(&app_handle)));
+            // 便签高度动画状态(见 resize_note_window)
+            app.manage(Mutex::new(NoteResizeState::default()));
 
             // 托盘菜单
             let toggle_item = MenuItem::with_id(app, "toggle", "暂停", true, None::<&str>)?;

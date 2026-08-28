@@ -1,5 +1,7 @@
-// 便签数据 store:待办条目。唯一写者是便签窗口(storage 门控见 persist.ts noteStorage)。
+// 便签数据 store:主题(Topic)与待办条目。唯一写者是便签窗口(storage 门控见 persist.ts noteStorage)。
 // 在便签输入框打字计入伙伴 XP:全局低级钩子与窗口焦点无关,无需在此处理。
+// 主题 = 长期项目:子待办陆续完成只是进度,全部完成才整体收纳(doneAt 记在主题上);
+// 平铺待办(无 topicId)完成即收纳(原行为)。
 
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -14,16 +16,41 @@ export interface TodoItem {
   done: boolean;
   /** 排序参考:新事项追加到列表尾部 */
   createdAt: number;
+  /** 完成时间戳(平铺待办的收纳序;主题内子待办完成时间不对外展示);未完成为 undefined */
+  doneAt?: number;
+  /** 归属主题;平铺待办为 undefined */
+  topicId?: string;
+}
+
+export interface Topic {
+  id: string;
+  /** trim 后 1..42 字符 */
+  title: string;
+  createdAt: number;
+  /** 主题整体完成时间戳(全部子待办完成的时刻);未完成为 undefined */
+  doneAt?: number;
 }
 
 interface NoteState {
   todos: TodoItem[];
+  topics: Topic[];
 }
 
 interface NoteActions {
-  addTodo: (text: string) => void;
+  addTodo: (text: string, topicId?: string) => void;
   toggleTodo: (id: string) => void;
   removeTodo: (id: string) => void;
+  /** 行内编辑:trim 后为空时不变更(调用方视为取消) */
+  updateTodo: (id: string, text: string) => void;
+  /** 拖动排序:把 id 移动到 toIndex(越界时钳制);仅在平铺待办间有效 */
+  reorderTodo: (id: string, toIndex: number) => void;
+  addTopic: (title: string) => string;
+  /** 主题改名:trim 后为空时不变更 */
+  updateTopic: (id: string, title: string) => void;
+  /** 删除主题 = 连带删除其全部子待办(调用方负责确认) */
+  removeTopic: (id: string) => void;
+  /** 拖动排序主题(仅主列表的平铺待办+主题行序列内有效) */
+  reorderTopic: (id: string, toIndex: number) => void;
 }
 
 export type NoteStore = NoteState & NoteActions;
@@ -38,29 +65,129 @@ export const useNoteStore = create<NoteStore>()(
   persist(
     (set) => ({
       todos: [],
+      topics: [],
 
-      addTodo: (text) => {
+      addTodo: (text, topicId) => {
         const trimmed = text.trim();
         if (!trimmed) return;
         set((state) => ({
-          todos: [...state.todos, { id: newId(), text: trimmed, done: false, createdAt: Date.now() }],
+          todos: [
+            ...state.todos,
+            { id: newId(), text: trimmed, done: false, createdAt: Date.now(), topicId },
+          ],
         }));
       },
 
+      // 平铺待办完成:原位保留(收纳表按 doneAt 排序,数组位置无关);
+      // 取消完成:回到进行中列表末尾(数组顺序即进行中顺序)。
+      // 主题内子待办:完成仅改自身(进度),主题 doneAt 由 UI 层在全部完成时落笔;
+      // 取消完成同时清掉主题 doneAt(主题回到进行中)。
       toggleTodo: (id) =>
-        set((state) => ({
-          todos: state.todos.map((todo) => (todo.id === id ? { ...todo, done: !todo.done } : todo)),
-        })),
+        set((state) => {
+          const target = state.todos.find((todo) => todo.id === id);
+          if (!target) return state;
+          const flipped: TodoItem = {
+            ...target,
+            done: !target.done,
+            doneAt: target.done ? undefined : Date.now(),
+          };
+          if (target.topicId) {
+            const todos = state.todos.map((todo) => (todo.id === id ? flipped : todo));
+            const topic = state.topics.find((t) => t.id === target.topicId);
+            if (!topic) return { todos };
+            const children = todos.filter((t) => t.topicId === topic.id);
+            const allDone = flipped.done && children.every((t) => t.done);
+            return {
+              todos,
+              topics: allDone
+                ? state.topics.map((t) => (t.id === topic.id ? { ...t, doneAt: Date.now() } : t))
+                : state.topics.map((t) =>
+                    t.id === topic.id && t.doneAt ? { ...t, doneAt: undefined } : t,
+                  ),
+            };
+          }
+          if (flipped.done) {
+            return { todos: state.todos.map((todo) => (todo.id === id ? flipped : todo)) };
+          }
+          return { todos: [...state.todos.filter((todo) => todo.id !== id), flipped] };
+        }),
 
       removeTodo: (id) =>
         set((state) => ({
           todos: state.todos.filter((todo) => todo.id !== id),
         })),
+
+      updateTodo: (id, text) => {
+        const trimmed = text.trim();
+        if (!trimmed) return;
+        set((state) => ({
+          todos: state.todos.map((todo) => (todo.id === id ? { ...todo, text: trimmed } : todo)),
+        }));
+      },
+
+      reorderTodo: (id, toIndex) =>
+        set((state) => {
+          // 仅平铺待办间排序:主题子待办顺序即创建序,不提供拖动
+          const flat = state.todos.filter((t) => !t.topicId);
+          const from = flat.findIndex((t) => t.id === id);
+          if (from < 0 || from === toIndex) return state;
+          const next = flat.slice();
+          const [moved] = next.splice(from, 1);
+          next.splice(Math.max(0, Math.min(toIndex, next.length)), 0, moved);
+          // 平铺段重排后按「平铺序在前、主题子待办在后」重组
+          const flatIds = new Set(next.map((t) => t.id));
+          return {
+            todos: [
+              ...next,
+              ...state.todos.filter((t) => !flatIds.has(t.id)),
+            ],
+          };
+        }),
+
+      addTopic: (title) => {
+        const trimmed = title.trim();
+        const id = newId();
+        if (!trimmed) return id;
+        set((state) => ({ topics: [...state.topics, { id, title: trimmed, createdAt: Date.now() }] }));
+        return id;
+      },
+
+      updateTopic: (id, title) => {
+        const trimmed = title.trim();
+        if (!trimmed) return;
+        set((state) => ({
+          topics: state.topics.map((t) => (t.id === id ? { ...t, title: trimmed } : t)),
+        }));
+      },
+
+      removeTopic: (id) =>
+        set((state) => ({
+          topics: state.topics.filter((t) => t.id !== id),
+          todos: state.todos.filter((t) => t.topicId !== id),
+        })),
+
+      reorderTopic: (id, toIndex) => {
+        set((state) => {
+          const active = state.topics.filter((t) => !t.doneAt);
+          const from = active.findIndex((t) => t.id === id);
+          if (from < 0 || from === toIndex) return state;
+          const next = active.slice();
+          const [moved] = next.splice(from, 1);
+          next.splice(Math.max(0, Math.min(toIndex, next.length)), 0, moved);
+          const doneTopics = state.topics.filter((t) => t.doneAt);
+          return { topics: [...next, ...doneTopics] };
+        });
+      },
     }),
     {
       name: NOTE_STORE_NAME,
       storage: noteStorage,
-      version: 1,
+      version: 2,
+      // v1(纯 todos)→ v2(topics + topicId):旧数据天然兼容,补空 topics 即可
+      migrate: (persisted) => {
+        const state = persisted as { todos?: TodoItem[] };
+        return { todos: state.todos ?? [], topics: [] };
+      },
     },
   ),
 );
