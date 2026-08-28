@@ -493,15 +493,31 @@
   --note-border: #3b3d42;
   --note-accent: #fdde27; /* 运行时由 React 内联 style 覆盖 */
   --note-font-mono: "Cascadia Code", Consolas, "Courier New", monospace;
+  position: relative;
   box-sizing: border-box;
   width: 292px;
-  padding: 20px;
+  padding: 0;
   border: 1px solid var(--note-border);
   border-radius: 8px;
   background: var(--note-bg);
   color: var(--note-text);
   /* 键帽质感:顶部极淡内高光(无投影,Rust 侧 shadow:false) */
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  opacity: 1;
+  transform: translate(0, 0) scale(1);
+  transform-origin: 82% 0;
+  transition:
+    opacity 120ms ease,
+    transform 150ms cubic-bezier(0.23, 1, 0.32, 1),
+    border-color 160ms ease;
+}
+.note-card.is-pinned {
+  border-color: color-mix(in srgb, var(--note-accent) 42%, var(--note-border));
+}
+.note-card.is-hiding,
+.note-card.is-restoring {
+  opacity: 0;
+  transform: translate(8px, 10px) scale(0.94);
 }
 @media (prefers-color-scheme: dark) {
   .note-card {
@@ -511,55 +527,84 @@
 }
 
 .note-head {
+  position: relative;
+  min-height: 52px;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--note-border);
+  gap: 10px;
+  padding: 8px 10px 8px 14px;
   cursor: grab;
   user-select: none;
   touch-action: none;
 }
+.note-card:not(.is-collapsed) .note-head {
+  margin: 0 10px;
+  padding-inline: 4px 0;
+  border-bottom: 1px solid var(--note-border);
+}
 .note-head:active {
   cursor: grabbing;
 }
-.note-kicker {
-  display: block;
-  margin-bottom: 2px;
-  color: var(--note-accent);
-  font-family: var(--note-font-mono);
-  font-size: 0.68rem;
-  font-weight: 800;
-  letter-spacing: 0.16em;
+.note-head-text {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.note-title-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .note-title {
+  min-width: 0;
+  overflow: hidden;
   margin: 0;
-  font-size: 1.125rem;
-  line-height: 1.25;
+  font-size: 1rem;
+  line-height: 1.22;
   font-weight: 720;
+  letter-spacing: -0.015em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.note-pin-state {
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: transparent;
+  transition: background-color 140ms ease, transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.note-card.is-pinned .note-pin-state {
+  background: var(--note-accent);
+  transform: scale(1.05);
 }
 .note-head-actions {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
 }
 /* 进度徽章:纯数据展示(2/5),不再承担视图切换 */
 .note-progress {
   flex: none;
-  padding: 2px 6px;
+  min-width: 35px;
+  padding: 0;
   color: var(--note-muted);
   font-family: var(--note-font-mono);
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
+  text-align: center;
 }
-/* 收纳盒入口:与图钉同款交互语言(hover 回亮/激活态强调色) */
-.note-archive {
+/* 头部可见窗口操作:收纳、条幅、更多 */
+.note-archive,
+.note-window-action {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 1px solid transparent;
   border-radius: 6px;
@@ -572,89 +617,174 @@
     background-color 0.16s ease;
 }
 .note-archive:hover,
-.note-archive:focus-visible {
+.note-archive:focus-visible,
+.note-window-action:hover,
+.note-window-action:focus-visible,
+.note-window-action[aria-expanded="true"] {
   color: var(--note-text);
   border-color: var(--note-border);
+  background: #23252a;
 }
-.note-archive:focus-visible {
+.note-archive:focus-visible,
+.note-window-action:focus-visible {
   outline: 2px solid var(--note-accent);
   outline-offset: 1px;
 }
-.note-archive:active {
+.note-archive:active,
+.note-window-action:active {
   transform: scale(0.92);
 }
-.note-archive svg {
+.note-archive svg,
+.note-window-action svg {
   width: 15px;
   height: 15px;
   fill: currentColor;
+  stroke: currentColor;
 }
-.note-archive svg .icon-stroke {
+.note-archive svg .icon-stroke,
+.note-window-action svg path {
   fill: none;
   stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
   stroke-linejoin: round;
 }
 /* 收纳表视图态:强调色示意当前位置 */
 .note-archive.is-active {
   color: var(--note-accent);
 }
-.note-pin {
+.note-collapse svg {
+  transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.note-card.is-collapsed .note-collapse svg {
+  transform: rotate(180deg);
+}
+.note-body {
   display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--note-muted);
-  cursor: pointer;
-  /* 颜色/边框变化(hover 与钉住态)与旋转同步渐变;transform 是按压反馈 */
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 180ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.note-body-inner {
+  min-height: 0;
+  overflow: hidden;
+  opacity: 1;
+  transform: translateY(0);
   transition:
-    color 0.16s ease,
-    border-color 0.16s ease,
-    transform 0.16s cubic-bezier(0.23, 1, 0.32, 1);
+    opacity 120ms ease 50ms,
+    transform 180ms cubic-bezier(0.23, 1, 0.32, 1) 35ms;
 }
-.note-pin:hover,
-.note-pin:focus-visible {
+.note-card.is-collapsed .note-body {
+  grid-template-rows: 0fr;
+}
+.note-card.is-collapsed .note-body-inner {
+  opacity: 0;
+  transform: translateY(-6px);
+  transition-delay: 0ms;
+}
+.note-content {
+  padding: 0 20px 16px;
+}
+.note-more-menu {
+  position: absolute;
+  top: 46px;
+  right: 8px;
+  width: 188px;
+  z-index: 20;
+  padding: 6px;
+  border: 1px solid #51545c;
+  border-radius: 8px;
+  background: #101113;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.42);
+  animation: note-menu-in 150ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@keyframes note-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+}
+.note-menu-item {
+  width: 100%;
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
   color: var(--note-text);
-  border-color: var(--note-border);
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
 }
-.note-pin:focus-visible {
-  outline: none;
+.note-menu-item:hover {
+  background: #23252a;
 }
-/* 按压反馈:缩放按钮本体,svg 的 transform 留给旋转态 */
-.note-pin:active {
-  transform: scale(0.92);
+.note-menu-item:active {
+  background: var(--note-border);
 }
-.note-pin svg {
-  width: 13px;
-  height: 13px;
+.note-menu-item:focus-visible {
+  outline: 2px solid var(--note-accent);
+  outline-offset: -1px;
+}
+.note-menu-item.is-danger:hover {
+  color: #ef7474;
+}
+.note-menu-item svg {
+  width: 15px;
+  height: 15px;
   fill: currentColor;
   stroke: currentColor;
-  /* 状态响应:强 ease-out,快启动 */
-  transition: transform 0.18s cubic-bezier(0.23, 1, 0.32, 1);
 }
-/* 直立=置顶;未钉住时斜放 45° */
-.note-pin:not(.is-pinned) svg {
-  transform: rotate(45deg);
+.note-menu-item svg path:last-child,
+.note-menu-item.is-danger svg path {
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
 }
-.note-pin.is-pinned {
-  color: var(--note-accent);
+.note-menu-separator {
+  height: 1px;
+  margin: 5px 7px;
+  background: var(--note-border);
 }
-/* 减弱动效:去掉旋转与按压位移,保留颜色/边框反馈 */
-@media (prefers-reduced-motion: reduce) {
-  .note-pin {
-    transition: color 0.16s ease, border-color 0.16s ease;
-  }
-  .note-pin:active {
-    transform: none;
-  }
-  .note-pin svg {
-    transition: none;
-  }
-  .note-pin:not(.is-pinned) svg {
-    transform: none;
-  }
+.note-menu-switch {
+  position: relative;
+  width: 30px;
+  height: 18px;
+  border: 1px solid #51545c;
+  border-radius: 999px;
+  background: #23252a;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+.note-menu-switch::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--note-muted);
+  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1), background-color 140ms ease;
+}
+.note-menu-item[aria-checked="true"] .note-menu-switch {
+  border-color: var(--note-accent);
+  background: color-mix(in srgb, var(--note-accent) 18%, #23252a);
+}
+.note-menu-item[aria-checked="true"] .note-menu-switch::after {
+  background: var(--note-accent);
+  transform: translateX(12px);
+}
+.note-menu-item[role="menuitemcheckbox"]:hover .note-menu-switch {
+  border-color: var(--note-accent);
+}
+.note-menu-item[role="menuitemcheckbox"][aria-checked="false"]:active .note-menu-switch::after {
+  transform: scale(0.86);
+}
+.note-menu-item[role="menuitemcheckbox"][aria-checked="true"]:active .note-menu-switch::after {
+  transform: translateX(12px) scale(0.86);
 }
 
 .todo-list {
@@ -704,10 +834,17 @@
   color: var(--note-accent);
   cursor: pointer;
   /* 完成态去框时边框平滑隐去,与爪印弹出同步 */
-  transition: border-color 0.16s ease;
+  transition:
+    border-color 0.16s ease,
+    background-color 0.16s ease,
+    transform 0.1s cubic-bezier(0.23, 1, 0.32, 1);
 }
 .todo-check:hover {
   border-color: var(--note-accent);
+  background: color-mix(in srgb, var(--note-accent) 7%, transparent);
+}
+.todo-check:active {
+  transform: scale(0.88);
 }
 .todo-check:focus-visible {
   outline: 2px solid var(--note-accent);
@@ -733,7 +870,7 @@
   background: #26282d;
   color: var(--note-muted);
   font-family: var(--note-font-mono);
-  font-size: 10px;
+  font-size: 0.72rem;
   line-height: 1;
   cursor: grab;
   touch-action: none;
@@ -829,14 +966,10 @@
 
 .todo-form {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   padding-top: 10px;
   border-top: 1px solid var(--note-border);
-}
-/* 主题子视图内无类型切换,回两列(首列塌缩) */
-.todo-form:not(:has(.todo-compose)) {
-  grid-template-columns: minmax(0, 1fr) auto;
 }
 .todo-input,
 .todo-add {
@@ -870,6 +1003,75 @@
   /* 扁平化:主操作键同样只留 1px 壁影 */
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
 }
+.todo-add:hover:not(:disabled) {
+  background: #ffe65f;
+}
+.todo-add:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+.todo-add:disabled {
+  opacity: 0.42;
+  cursor: default;
+  box-shadow: none;
+}
+.note-project-entry {
+  width: 100%;
+  min-height: 30px;
+  margin-top: 7px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--note-muted);
+  font-size: 0.75rem;
+  text-align: left;
+  cursor: pointer;
+  transition: color 140ms ease;
+}
+.note-project-entry:hover {
+  color: var(--note-text);
+}
+.note-project-entry:active {
+  color: var(--note-accent);
+}
+.note-project-composer {
+  padding-top: 8px;
+  animation: note-composer-in 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.note-project-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  color: var(--note-text);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+.note-project-label button {
+  min-height: 28px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--note-muted);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+.note-project-label button:hover {
+  color: var(--note-text);
+}
+.note-project-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--note-border);
+}
+@keyframes note-composer-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
 .todo-empty {
   padding: 12px 0;
   color: var(--note-muted);
@@ -888,7 +1090,7 @@
 .todo-time {
   color: var(--note-muted);
   font-family: var(--note-font-mono);
-  font-size: 10px;
+  font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -946,7 +1148,7 @@
   flex: none;
   color: var(--note-muted);
   font-family: var(--note-font-mono);
-  font-size: 10px;
+  font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -955,12 +1157,13 @@
   flex: none;
   width: 22px;
   height: 22px;
+  display: grid;
+  place-items: center;
   padding: 0;
   border: 1px solid var(--note-border);
   border-radius: 6px;
   background: transparent;
   color: var(--note-muted);
-  font-size: 14px;
   line-height: 1;
   cursor: pointer;
   transition:
@@ -973,44 +1176,18 @@
   border-color: #4a4d54;
 }
 .note-back:focus-visible {
-  outline: none;
-}
-.note-topic-progress {
-  flex: none;
-  color: var(--note-accent);
-  font-family: var(--note-font-mono);
-  font-size: 0.75rem;
-  font-variant-numeric: tabular-nums;
-}
-
-/* 输入框类型切换:待办/主题。键帽小开关语言 */
-.todo-compose {
-  min-height: 38px;
-  padding: 0 10px;
-  border: 1px solid var(--note-border);
-  border-radius: 4px;
-  background: transparent;
-  color: var(--note-muted);
-  font-size: 0.75rem;
-  cursor: pointer;
-  transition:
-    color 0.16s ease,
-    border-color 0.16s ease,
-    background 0.16s ease;
-}
-.todo-compose:hover {
-  color: var(--note-text);
-}
-.todo-compose:focus-visible {
   outline: 2px solid var(--note-accent);
   outline-offset: 1px;
 }
-.todo-compose.topic {
-  border-color: var(--note-accent);
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--note-accent);
+.note-back svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
-
 /* 页码条:仅超过一页时渲染;等宽小字居中,与整体克制的键帽语言一致 */
 .todo-pager {
   display: flex;
@@ -1050,7 +1227,7 @@
 .todo-pager-num {
   color: var(--note-muted);
   font-family: var(--note-font-mono);
-  font-size: 10px;
+  font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1155,11 +1332,37 @@
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .note-card {
+    transition: border-color 0.16s ease;
+  }
+  .note-card.is-hiding,
+  .note-card.is-restoring {
+    opacity: 1;
+    transform: none;
+  }
+  .note-collapse svg,
+  .note-body,
+  .note-body-inner,
+  .note-menu-switch,
+  .note-menu-switch::after {
+    transition: none;
+  }
+  .note-more-menu,
+  .note-project-composer {
+    animation: none;
+  }
+}
+
 /* 便签窗口:固定 292px 内容,窗口 resize 过渡期 DPI 亚像素差会瞬间触发
    html 级滚动条(横竖双向闪现)。整窗禁滚——列表区自带 overflow-y: auto */
 html:has(.note-card),
 body:has(.note-card) {
   overflow: hidden;
+}
+html:has(.note-card.has-menu-open),
+body:has(.note-card.has-menu-open) {
+  overflow: visible;
 }
 
 @keyframes note-paw-pop {

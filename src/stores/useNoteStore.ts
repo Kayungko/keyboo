@@ -34,6 +34,8 @@ export interface Topic {
 interface NoteState {
   todos: TodoItem[];
   topics: Topic[];
+  /** 窗口可见形态:展开(false) / 条幅(true);隐藏到托盘不改变本值 */
+  collapsed: boolean;
 }
 
 interface NoteActions {
@@ -51,6 +53,7 @@ interface NoteActions {
   removeTopic: (id: string) => void;
   /** 拖动排序主题(仅主列表的平铺待办+主题行序列内有效) */
   reorderTopic: (id: string, toIndex: number) => void;
+  setCollapsed: (collapsed: boolean) => void;
 }
 
 export type NoteStore = NoteState & NoteActions;
@@ -66,6 +69,7 @@ export const useNoteStore = create<NoteStore>()(
     (set) => ({
       todos: [],
       topics: [],
+      collapsed: false,
 
       addTodo: (text, topicId) => {
         const trimmed = text.trim();
@@ -178,15 +182,21 @@ export const useNoteStore = create<NoteStore>()(
           return { topics: [...next, ...doneTopics] };
         });
       },
+
+      setCollapsed: (collapsed) => set({ collapsed }),
     }),
     {
       name: NOTE_STORE_NAME,
       storage: noteStorage,
-      version: 2,
-      // v1(纯 todos)→ v2(topics + topicId):旧数据天然兼容,补空 topics 即可
+      version: 3,
+      // v1/v2 → v3:保留旧 todos/topics,补窗口条幅状态
       migrate: (persisted) => {
-        const state = persisted as { todos?: TodoItem[] };
-        return { todos: state.todos ?? [], topics: [] };
+        const state = persisted as { todos?: TodoItem[]; topics?: Topic[]; collapsed?: boolean };
+        return {
+          todos: state.todos ?? [],
+          topics: state.topics ?? [],
+          collapsed: state.collapsed ?? false,
+        };
       },
     },
   ),

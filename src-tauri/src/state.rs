@@ -80,13 +80,12 @@ impl AppState {
         // 便签与浮层同生命周期:静默=屏幕不留痕承诺,必须隐藏;
         // 恢复时仅当便签启用才回显。Rust 直接控制窗口显隐,不依赖前端事件竞态
         if let Some(note) = app.get_webview_window("note") {
-            let _ = if self.silent {
-                note.hide()
+            if self.silent {
+                let _ = note.hide();
             } else if self.note_enabled {
-                note.show()
-            } else {
-                Ok(())
-            };
+                let _ = note.show();
+                let _ = app.emit_to("note", "note-window-restored", ());
+            }
         }
     }
 }

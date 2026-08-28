@@ -7,6 +7,7 @@
 // 过渡:翻页/视图切换/进出主题共用方向感知滑动(旧页快照离场 + 新页滑入)。
 
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useRef, useState } from "react";
 import { listenSync } from "@/stores/sync";
@@ -59,6 +60,40 @@ function ArchiveIcon() {
   );
 }
 
+function BackIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M15 6 9 12l6 6" />
+    </svg>
+  );
+}
+
+function CollapseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="m7 14 5-5 5 5" />
+    </svg>
+  );
+}
+
+function MoreIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="5" cy="12" r="1.4" />
+      <circle cx="12" cy="12" r="1.4" />
+      <circle cx="19" cy="12" r="1.4" />
+    </svg>
+  );
+}
+
+function HideIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M5 12h14" />
+    </svg>
+  );
+}
+
 /** 收纳表行的完成时间:今天显示 HH:MM,更早显示 M/D,缺失(旧数据)显示占位符 */
 function formatDoneAt(ts?: number) {
   if (!ts) return "–";
@@ -104,20 +139,31 @@ export function Note() {
   const addTopic = useNoteStore((s) => s.addTopic);
   const updateTopic = useNoteStore((s) => s.updateTopic);
   const removeTopic = useNoteStore((s) => s.removeTopic);
+  const collapsed = useNoteStore((s) => s.collapsed);
+  const setCollapsed = useNoteStore((s) => s.setCollapsed);
   const accentColor = useNoteConfigStore((s) => s.accentColor);
 
   const cardRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const dragRef = useRef<DragSession | null>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const projectInputRef = useRef<HTMLInputElement>(null);
+  const projectEntryRef = useRef<HTMLButtonElement>(null);
   const [draft, setDraft] = useState("");
+  const [projectDraft, setProjectDraft] = useState("");
+  const [projectComposer, setProjectComposer] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [windowMotion, setWindowMotion] = useState<"" | "is-hiding" | "is-restoring">("");
+  const [reducedMotion, setReducedMotion] = useState(() =>
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
   const [pinned, setPinned] = useState(true);
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [view, setView] = useState<NoteView>("active");
   const [page, setPage] = useState(1);
   /** 进入中的主题 id;null = 主列表 */
   const [topicId, setTopicId] = useState<string | null>(null);
-  /** 输入框目标类型:主列表下决定 Enter 建的是待办还是主题 */
-  const [composeAsTopic, setComposeAsTopic] = useState(false);
   // 离场快照:翻页/视图切换时旧列表的静态影子(无交互),动画结束即卸载
   const [leaving, setLeaving] = useState<{
     node: React.ReactNode;
@@ -148,7 +194,57 @@ export function Note() {
     };
   }, []);
 
-  // 窗口高度随内容自适应:观察卡片实际高度 → 防抖通知 Rust set_size(顶部锚定向下生长)
+  // 从托盘恢复:Rust 显示窗口后通知前端,只播放一次短促的右下→原位回场。
+  useEffect(() => {
+    const unlisten = listen("note-window-restored", () => {
+      if (reducedMotion) {
+        setWindowMotion("");
+        return;
+      }
+      setWindowMotion("is-restoring");
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => setWindowMotion(""));
+      });
+    });
+    return () => {
+      void unlisten.then((un) => un());
+    };
+  }, [reducedMotion]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sync = () => setReducedMotion(media.matches);
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    if (!projectComposer) return;
+    const raf = requestAnimationFrame(() => projectInputRef.current?.focus());
+    return () => cancelAnimationFrame(raf);
+  }, [projectComposer]);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (moreMenuRef.current?.contains(target) || moreButtonRef.current?.contains(target)) return;
+      setMoreOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMoreOpen(false);
+      requestAnimationFrame(() => moreButtonRef.current?.focus());
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [moreOpen]);
+
+  // 窗口高度随内容自适应:条幅打开更多菜单时额外让出透明承载区,避免原生窗口裁切弹层。
   useEffect(() => {
     const card = cardRef.current;
     if (!card) return;
@@ -158,7 +254,8 @@ export function Note() {
         entries[0]?.borderBoxSize?.[0]?.blockSize ?? card.getBoundingClientRect().height;
       if (timer) clearTimeout(timer);
       timer = window.setTimeout(() => {
-        invoke("resize_note_window", { height }).catch(() => {});
+        const targetHeight = collapsed && moreOpen ? Math.max(height, 156) : height;
+        invoke("resize_note_window", { height: targetHeight, animate: !reducedMotion }).catch(() => {});
       }, 100);
     });
     observer.observe(card);
@@ -166,7 +263,7 @@ export function Note() {
       observer.disconnect();
       if (timer) clearTimeout(timer);
     };
-  }, []);
+  }, [collapsed, moreOpen, reducedMotion]);
 
   // 拖动落盘:窗口移动事件防抖保存(Rust 侧钳制到虚拟屏内,幂等)
   useEffect(() => {
@@ -264,17 +361,25 @@ export function Note() {
       setDraft("");
       return;
     }
-    if (composeAsTopic) {
-      // 主列表:建主题并直接进它的子视图开始拆解
-      const id = addTopic(draft);
-      setDraft("");
-      goList(1, "active", id, 1);
-      return;
-    }
     addTodo(draft);
     setDraft("");
     // 新事项落在进行中列表末尾:跳到它所在页
     goList(Math.ceil((activeTodos.length + 1) / PAGE_SIZE), "active", null, 1);
+  };
+
+  const submitProject = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!projectDraft.trim()) return;
+    const id = addTopic(projectDraft);
+    setProjectDraft("");
+    setProjectComposer(false);
+    goList(1, "active", id, 1);
+  };
+
+  const closeProjectComposer = () => {
+    setProjectComposer(false);
+    setProjectDraft("");
+    requestAnimationFrame(() => projectEntryRef.current?.focus());
   };
 
   // 中文 IME 确认选词的 Enter 不触发表单提交
@@ -291,8 +396,90 @@ export function Note() {
     invoke("set_note_pinned", { pinned: next }).catch(() => setPinned(!next));
   };
 
+  const togglePinFromMenu = () => {
+    togglePin();
+    setMoreOpen(false);
+    requestAnimationFrame(() => moreButtonRef.current?.focus());
+  };
+
+  const toggleCollapsed = () => {
+    setCollapsed(!collapsed);
+    setMoreOpen(false);
+  };
+
+  const hideToTray = () => {
+    setMoreOpen(false);
+    if (reducedMotion) {
+      getCurrentWindow().hide().catch(() => {});
+      return;
+    }
+    setWindowMotion("is-hiding");
+    window.setTimeout(() => {
+      getCurrentWindow()
+        .hide()
+        .catch(() => setWindowMotion(""));
+    }, 125);
+  };
+
+  const closeMenuAndMoveFocus = (backward: boolean) => {
+    setMoreOpen(false);
+    requestAnimationFrame(() => {
+      const trigger = moreButtonRef.current;
+      if (!trigger) return;
+      const focusables = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          "button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex='-1'])",
+        ),
+      ).filter(
+        (element) =>
+          element.offsetParent !== null &&
+          !element.closest("[inert]") &&
+          !element.closest("[aria-hidden='true']"),
+      );
+      const index = focusables.indexOf(trigger);
+      if (index < 0 || focusables.length < 2) {
+        trigger.focus();
+        return;
+      }
+      const nextIndex = (index + (backward ? -1 : 1) + focusables.length) % focusables.length;
+      focusables[nextIndex]?.focus();
+    });
+  };
+
+  const onMoreMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(
+      moreMenuRef.current?.querySelectorAll<HTMLButtonElement>("[role='menuitemcheckbox'], [role='menuitem']") ?? [],
+    );
+    if (!items.length) return;
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    const focusItem = (nextIndex: number) => {
+      items.forEach((item, itemIndex) => {
+        item.tabIndex = itemIndex === nextIndex ? 0 : -1;
+      });
+      items[nextIndex]?.focus();
+    };
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      focusItem((index + 1 + items.length) % items.length);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      focusItem((index - 1 + items.length) % items.length);
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      focusItem(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      focusItem(items.length - 1);
+    } else if (event.key === "Tab") {
+      event.preventDefault();
+      closeMenuAndMoveFocus(event.shiftKey);
+    }
+  };
+
   // 收纳盒按钮 = 视图切换:进行中 ↔ 已完成(收纳表)
   const switchView = () => {
+    setProjectComposer(false);
+    setProjectDraft("");
     goList(1, view === "active" ? "done" : "active", null, view === "active" ? 1 : -1);
   };
 
@@ -645,166 +832,250 @@ export function Note() {
 
   const listKey = `${view}-${topicId ?? "main"}-${pageSafe}`;
   const isArchiveList = view === "done";
+  const headerTitle = topicId ? currentTopic?.title ?? "" : view === "active" ? "今日待办" : "已完成";
+  const headerProgress = topicId
+    ? `${currentChildren.filter((c) => c.done).length} / ${currentChildren.length}`
+    : `${doneCount} / ${todos.length}`;
+  const cardClassName = [
+    "note-card",
+    collapsed ? "is-collapsed" : "",
+    pinned ? "is-pinned" : "",
+    moreOpen ? "has-menu-open" : "",
+    windowMotion,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div
-      className="note-card"
+      className={cardClassName}
       ref={cardRef}
       style={{ "--note-accent": accentColor } as React.CSSProperties}
     >
       <header className="note-head" onPointerDown={startDrag}>
         <div className="note-head-text">
-          {/* key 随视图切换重挂:note-swap 淡入重放(180ms,与列表滑动同一节奏) */}
-          {topicId ? (
-            <>
-              <button
-                type="button"
-                className="note-back"
-                aria-label="返回待办列表"
-                title="返回待办列表"
-                onClick={() => goList(1, "active", null, -1)}
-              >
-                ‹
-              </button>
-              <span className="note-kicker note-swap" key={`k-topic`}>
-                TOPIC
-              </span>
-              <h3 className="note-title note-swap" key={`t-${topicId}`}>
-                {currentTopic?.title ?? ""}
-              </h3>
-              <span className="note-topic-progress">
-                {currentChildren.filter((c) => c.done).length}/{currentChildren.length}
-              </span>
-            </>
-          ) : (
-            <>
-              <span className="note-kicker note-swap" key={`k-${view}`}>
-                {view === "active" ? "TO-DO" : "DONE"}
-              </span>
-              <h3 className="note-title note-swap" key={`t-${view}`}>
-                {view === "active" ? "今日待办" : "已完成"}
-              </h3>
-            </>
+          {topicId && (
+            <button
+              type="button"
+              className="note-back"
+              aria-label="返回待办列表"
+              title="返回待办列表"
+              onClick={() => goList(1, "active", null, -1)}
+            >
+              <BackIcon />
+            </button>
           )}
+          <div className="note-title-line note-swap" key={`${view}-${topicId ?? "main"}`}>
+            <h3 className="note-title">{headerTitle}</h3>
+            <span className="note-pin-state" aria-label={pinned ? "保持在最前" : undefined} />
+          </div>
         </div>
         <div className="note-head-actions">
-          <span className="note-progress">
-            {doneCount} / {todos.length}
-          </span>
+          <span className="note-progress">{headerProgress}</span>
+          {!collapsed && (
+            <button
+              type="button"
+              ref={archiveBtnRef}
+              className={view === "done" ? "note-archive is-active" : "note-archive"}
+              aria-pressed={view === "done"}
+              aria-label={view === "done" ? "返回进行中" : "查看已完成收纳盒"}
+              title={view === "done" ? "返回进行中" : "已完成收纳盒"}
+              onClick={switchView}
+            >
+              <ArchiveIcon />
+            </button>
+          )}
           <button
             type="button"
-            ref={archiveBtnRef}
-            className={view === "done" ? "note-archive is-active" : "note-archive"}
-            aria-pressed={view === "done"}
-            aria-label={view === "done" ? "返回进行中" : "查看已完成收纳盒"}
-            title={view === "done" ? "返回进行中" : "已完成收纳盒"}
-            onClick={switchView}
+            className="note-window-action note-collapse"
+            aria-label={collapsed ? "展开便签" : "收起为条幅"}
+            title={collapsed ? "展开便签" : "收起为条幅"}
+            onClick={toggleCollapsed}
           >
-            <ArchiveIcon />
+            <CollapseIcon />
           </button>
           <button
             type="button"
-            className={pinned ? "note-pin is-pinned" : "note-pin"}
-            aria-pressed={pinned}
-            aria-label={pinned ? "取消置顶" : "置顶便签"}
-            title={pinned ? "取消置顶" : "置顶便签"}
-            onClick={togglePin}
+            ref={moreButtonRef}
+            className="note-window-action"
+            aria-haspopup="menu"
+            aria-expanded={moreOpen}
+            aria-label="更多窗口操作"
+            title="更多窗口操作"
+            onClick={() => {
+              const next = !moreOpen;
+              setMoreOpen(next);
+              if (next) requestAnimationFrame(() => moreMenuRef.current?.querySelector<HTMLButtonElement>("button")?.focus());
+            }}
           >
-            <PinIcon />
+            <MoreIcon />
           </button>
         </div>
       </header>
 
-      <div className="todo-list-wrap">
-        {/* 离场影子:旧页静态快照,绝对定位盖在新页上滑出,动画完由 leaving 寿命卸载 */}
-        {leaving && (
-          <ul
-            className={
-              leaving.key.includes("done") ? "todo-list is-archive is-leaving" : "todo-list is-leaving"
-            }
-            aria-hidden="true"
-            style={{ "--page-dir": leaving.dir } as React.CSSProperties}
-          >
-            {leaving.node}
-          </ul>
-        )}
-        {/* key 随页/视图/主题重挂:每次跳转重放 note-page-in 进入动画 */}
-        <ul
-          className={
-            leaving
-              ? isArchiveList
-                ? "todo-list is-archive is-entering"
-                : "todo-list is-entering"
-              : isArchiveList
-                ? "todo-list is-archive"
-                : "todo-list"
-          }
-          key={listKey}
-          ref={listRef}
-          style={{ "--page-dir": (leaving?.dir ?? 1) as number } as React.CSSProperties}
-        >
-          {viewRows.length === 0 && <li className="todo-empty">{emptyText}</li>}
-          {renderRows(pageRows, false)}
-        </ul>
+      <div className="note-body" aria-hidden={collapsed} inert={collapsed ? true : undefined}>
+        <div className="note-body-inner">
+          <div className="note-content">
+            <div className="todo-list-wrap">
+              {leaving && (
+                <ul
+                  className={
+                    leaving.key.includes("done") ? "todo-list is-archive is-leaving" : "todo-list is-leaving"
+                  }
+                  aria-hidden="true"
+                  style={{ "--page-dir": leaving.dir } as React.CSSProperties}
+                >
+                  {leaving.node}
+                </ul>
+              )}
+              <ul
+                className={
+                  leaving
+                    ? isArchiveList
+                      ? "todo-list is-archive is-entering"
+                      : "todo-list is-entering"
+                    : isArchiveList
+                      ? "todo-list is-archive"
+                      : "todo-list"
+                }
+                key={listKey}
+                ref={listRef}
+                style={{ "--page-dir": (leaving?.dir ?? 1) as number } as React.CSSProperties}
+              >
+                {viewRows.length === 0 && <li className="todo-empty">{emptyText}</li>}
+                {renderRows(pageRows, false)}
+              </ul>
+            </div>
+
+            {pageCount > 1 && (
+              <nav className="todo-pager" aria-label="待办分页">
+                <button
+                  type="button"
+                  disabled={pageSafe === 1}
+                  aria-label="上一页"
+                  onClick={() => goList(Math.max(1, pageSafe - 1), view, topicId, -1)}
+                >
+                  ‹
+                </button>
+                <span className="todo-pager-num">{pageSafe} / {pageCount}</span>
+                <button
+                  type="button"
+                  disabled={pageSafe === pageCount}
+                  aria-label="下一页"
+                  onClick={() => goList(Math.min(pageCount, pageSafe + 1), view, topicId, 1)}
+                >
+                  ›
+                </button>
+              </nav>
+            )}
+
+            {view === "active" && (
+              projectComposer && !topicId ? (
+                <div className="note-project-composer">
+                  <div className="note-project-label">
+                    <span>新建项目</span>
+                    <button
+                      type="button"
+                      onClick={closeProjectComposer}
+                    >
+                      取消
+                    </button>
+                  </div>
+                  <form className="note-project-form" onSubmit={submitProject}>
+                    <input
+                      ref={projectInputRef}
+                      className="todo-input"
+                      type="text"
+                      value={projectDraft}
+                      maxLength={MAX_TEXT}
+                      autoComplete="off"
+                      placeholder="项目名称"
+                      aria-label="项目名称"
+                      onChange={(event) => setProjectDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          closeProjectComposer();
+                        } else if (event.key === "Enter" && event.nativeEvent.isComposing) {
+                          event.preventDefault();
+                        }
+                      }}
+                    />
+                    <button className="todo-add" type="submit" disabled={!projectDraft.trim()}>
+                      创建并拆解
+                    </button>
+                  </form>
+                </div>
+              ) : (
+                <>
+                  <form className="todo-form" onSubmit={submit}>
+                    <input
+                      className="todo-input"
+                      type="text"
+                      value={draft}
+                      maxLength={MAX_TEXT}
+                      autoComplete="off"
+                      placeholder={topicId ? "添加步骤，按 Enter" : "添加待办，按 Enter"}
+                      aria-label={topicId ? "添加步骤" : "添加待办"}
+                      onChange={(event) => setDraft(event.target.value)}
+                      onKeyDown={onInputKeyDown}
+                    />
+                    <button className="todo-add" type="submit" disabled={!draft.trim()}>
+                      添加
+                    </button>
+                  </form>
+                  {!topicId && (
+                    <button
+                      type="button"
+                      ref={projectEntryRef}
+                      className="note-project-entry"
+                      onClick={() => setProjectComposer(true)}
+                    >
+                      新建项目
+                    </button>
+                  )}
+                </>
+              )
+            )}
+          </div>
+        </div>
       </div>
 
-      {pageCount > 1 && (
-        <nav className="todo-pager" aria-label="待办分页">
+      {moreOpen && (
+        <div
+          className="note-more-menu"
+          ref={moreMenuRef}
+          role="menu"
+          aria-label="窗口操作"
+          onKeyDown={onMoreMenuKeyDown}
+        >
           <button
             type="button"
-            disabled={pageSafe === 1}
-            aria-label="上一页"
-            onClick={() => goList(Math.max(1, pageSafe - 1), view, topicId, -1)}
+            role="menuitemcheckbox"
+            aria-checked={pinned}
+            className="note-menu-item"
+            autoFocus
+            tabIndex={0}
+            onClick={togglePinFromMenu}
           >
-            ‹
+            <PinIcon />
+            <span>保持在最前</span>
+            <span className="note-menu-switch" aria-hidden="true" />
           </button>
-          <span className="todo-pager-num">
-            {pageSafe} / {pageCount}
-          </span>
+          <div className="note-menu-separator" role="separator" />
           <button
             type="button"
-            disabled={pageSafe === pageCount}
-            aria-label="下一页"
-            onClick={() => goList(Math.min(pageCount, pageSafe + 1), view, topicId, 1)}
+            role="menuitem"
+            className="note-menu-item is-danger"
+            tabIndex={-1}
+            onClick={hideToTray}
           >
-            ›
+            <HideIcon />
+            <span>隐藏到托盘</span>
+            <span />
           </button>
-        </nav>
+        </div>
       )}
-
-      <form className="todo-form" onSubmit={submit}>
-        {!topicId && (
-          <button
-            type="button"
-            className={composeAsTopic ? "todo-compose topic" : "todo-compose"}
-            aria-pressed={composeAsTopic}
-            aria-label={composeAsTopic ? "改为添加待办" : "改为添加主题"}
-            title={composeAsTopic ? "输入框将新建主题" : "输入框将新建待办"}
-            onClick={() => setComposeAsTopic((v) => !v)}
-          >
-            {composeAsTopic ? "主题" : "待办"}
-          </button>
-        )}
-        <input
-          className="todo-input"
-          type="text"
-          value={draft}
-          maxLength={MAX_TEXT}
-          autoComplete="off"
-          placeholder={
-            topicId
-              ? "添加步骤，按 Enter"
-              : composeAsTopic
-                ? "添加主题，按 Enter"
-                : "添加待办，按 Enter"
-          }
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={onInputKeyDown}
-        />
-        <button className="todo-add" type="submit">
-          添加
-        </button>
-      </form>
     </div>
   );
 }

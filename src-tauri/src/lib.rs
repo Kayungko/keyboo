@@ -273,6 +273,7 @@ fn apply_note_enabled(app: &tauri::AppHandle, enabled: bool) -> Result<(), Strin
             let silent = app.state::<Mutex<AppState>>().lock().unwrap().silent;
             if !silent {
                 let _ = window.show();
+                let _ = app.emit_to("note", "note-window-restored", ());
             }
         } else {
             create_note_window(app)?;
@@ -371,15 +372,24 @@ struct NoteResizeState {
 /// 高度插值动画(约 180ms 三次 ease-out):窗口边框跟着内容平滑生长/收缩,
 /// 消除「内容先跳、100ms 后窗口底边再跳」的双跳观感。
 #[tauri::command]
-fn resize_note_window(app: tauri::AppHandle, height: f64) -> Result<(), String> {
+fn resize_note_window(app: tauri::AppHandle, height: f64, animate: bool) -> Result<(), String> {
     let window = app
         .get_webview_window("note")
         .ok_or_else(|| "note window not found".to_string())?;
-    let target = height.clamp(200.0, 800.0);
+    // 52px 条幅态仍需走同一条高度动画;上限保持原内容安全边界。
+    let target = height.clamp(52.0, 800.0);
 
     let state = app.state::<Mutex<NoteResizeState>>();
     let (generation, start) = {
         let mut s = state.lock().unwrap();
+        if !animate {
+            s.generation += 1;
+            s.current_height = Some(target);
+            window
+                .set_size(tauri::LogicalSize::new(292.0, target))
+                .map_err(|e| e.to_string())?;
+            return Ok(());
+        }
         // 首次调用(无记录)直接落位:开窗首跳与旧行为一致,不额外放大动画
         if s.current_height.is_none() {
             window
