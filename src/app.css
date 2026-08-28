@@ -214,22 +214,22 @@
 }
 
 /* 柯基双耳镜像抖动，比通用同向旋转更像竖耳犬的响应。 */
-@keyframes corgi-ear-left-twitch {
+@keyframes companion-corgi-ear-left-twitch {
   0%, 100% { transform: rotate(0deg); }
   28% { transform: rotate(-7deg); }
   56% { transform: rotate(4deg); }
 }
-@keyframes corgi-ear-right-twitch {
+@keyframes companion-corgi-ear-right-twitch {
   0%, 100% { transform: rotate(0deg); }
   28% { transform: rotate(7deg); }
   56% { transform: rotate(-4deg); }
 }
 .companion-idle-ear .companion-corgi-svg .corgi-ear-left {
-  animation: corgi-ear-left-twitch 0.9s ease-in-out;
+  animation: companion-corgi-ear-left-twitch 0.9s ease-in-out;
   transform-origin: 80% 90%;
 }
 .companion-idle-ear .companion-corgi-svg .corgi-ear-right {
-  animation: corgi-ear-right-twitch 0.9s ease-in-out;
+  animation: companion-corgi-ear-right-twitch 0.9s ease-in-out;
   transform-origin: 20% 90%;
 }
 
@@ -388,8 +388,15 @@
 }
 .quota-eq-fill {
   width: 100%;
+  height: 100%;
+  transform-origin: bottom;
   border-radius: 99px;
-  transition: height 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.3s;
+  /* 数据变化:强 ease-out,不过冲 */
+  transition: transform 0.28s cubic-bezier(0.23, 1, 0.32, 1), background 0.3s;
+}
+/* 打字弹跳路径:保留过冲曲线 */
+.quota-eq-fill.quota-eq-bounce {
+  transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.3s;
 }
 .quota-glow .quota-eq-fill {
   box-shadow: 0 0 1px var(--quota-glow, var(--quota-c)), 0 0 calc(var(--quota-glow-blur, 6px) * 0.4) var(--quota-glow, var(--quota-c)), 0 0 var(--quota-glow-blur, 6px) var(--quota-glow, var(--quota-c));
@@ -473,4 +480,323 @@
 }
 .quota-glow .quota-dot {
   box-shadow: 0 0 1px var(--quota-glow, var(--quota-c)), 0 0 calc(var(--quota-glow-blur, 6px) * 0.4) var(--quota-glow, var(--quota-c)), 0 0 var(--quota-glow-blur, 6px) var(--quota-glow, var(--quota-c));
+}
+
+/* ─── 键帽便签(桌面待办;固定深色键帽语言,不随 app 主题切换) ───
+   视觉源:形态原型 v2(note-prototypes/index-v2.html,已过 design QA)。
+   4px 网格 · R4/R8 · 1px 边框;强调色由 React 内联覆盖(7 色选择器)。
+   动画类名一律 note- 前缀(禁 companion-,CompanionLayer 会误吞)。 */
+.note-card {
+  --note-bg: #1d1e21;
+  --note-text: #f8f6f1;
+  --note-muted: #a9abb1;
+  --note-border: #3b3d42;
+  --note-accent: #fdde27; /* 运行时由 React 内联 style 覆盖 */
+  --note-font-mono: "Cascadia Code", Consolas, "Courier New", monospace;
+  box-sizing: border-box;
+  width: 292px;
+  padding: 20px;
+  border: 1px solid var(--note-border);
+  border-radius: 8px;
+  background: var(--note-bg);
+  color: var(--note-text);
+  /* 键帽质感:顶部极淡内高光(无投影,Rust 侧 shadow:false) */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+@media (prefers-color-scheme: dark) {
+  .note-card {
+    --note-bg: #101113;
+    --note-border: #42454c;
+  }
+}
+
+.note-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--note-border);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.note-head:active {
+  cursor: grabbing;
+}
+.note-kicker {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--note-accent);
+  font-family: var(--note-font-mono);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+}
+.note-title {
+  margin: 0;
+  font-size: 1.125rem;
+  line-height: 1.25;
+  font-weight: 720;
+}
+.note-head-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+.note-progress {
+  flex: none;
+  color: var(--note-muted);
+  font-family: var(--note-font-mono);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+.note-pin {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--note-muted);
+  cursor: pointer;
+  /* 颜色/边框变化(hover 与钉住态)与旋转同步渐变;transform 是按压反馈 */
+  transition:
+    color 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.note-pin:hover,
+.note-pin:focus-visible {
+  color: var(--note-text);
+  border-color: var(--note-border);
+}
+.note-pin:focus-visible {
+  outline: none;
+}
+/* 按压反馈:缩放按钮本体,svg 的 transform 留给旋转态 */
+.note-pin:active {
+  transform: scale(0.92);
+}
+.note-pin svg {
+  width: 13px;
+  height: 13px;
+  fill: currentColor;
+  stroke: currentColor;
+  /* 状态响应:强 ease-out,快启动 */
+  transition: transform 0.18s cubic-bezier(0.23, 1, 0.32, 1);
+}
+/* 直立=置顶;未钉住时斜放 45° */
+.note-pin:not(.is-pinned) svg {
+  transform: rotate(45deg);
+}
+.note-pin.is-pinned {
+  color: var(--note-accent);
+}
+/* 减弱动效:去掉旋转与按压位移,保留颜色/边框反馈 */
+@media (prefers-reduced-motion: reduce) {
+  .note-pin {
+    transition: color 0.16s ease, border-color 0.16s ease;
+  }
+  .note-pin:active {
+    transform: none;
+  }
+  .note-pin svg {
+    transition: none;
+  }
+  .note-pin:not(.is-pinned) svg {
+    transform: none;
+  }
+}
+
+.todo-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 0;
+  display: grid;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--note-border) transparent;
+}
+.todo-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 2px 0;
+}
+.todo-check {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--note-muted);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--note-accent);
+  cursor: pointer;
+  /* 完成态去框时边框平滑隐去,与爪印弹出同步 */
+  transition: border-color 0.16s ease;
+}
+.todo-check:hover {
+  border-color: var(--note-accent);
+}
+.todo-check:focus-visible {
+  outline: 2px solid var(--note-accent);
+  outline-offset: 2px;
+}
+/* 完成态:去外壳,只剩爪印;hover 也不再回框 */
+.todo-row.is-done .todo-check,
+.todo-row.is-done .todo-check:hover {
+  border-color: transparent;
+}
+.todo-paw {
+  width: 15px;
+  height: 15px;
+  fill: currentColor;
+  /* 静止态倾斜 -12°(keyframes 每帧也携带,动画结束无跳变) */
+  transform: rotate(-12deg);
+  animation: note-paw-pop 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.todo-text {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.todo-row.is-done .todo-text {
+  color: var(--note-muted);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.todo-delete {
+  min-width: 40px;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--note-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+  opacity: 0;
+}
+.todo-row:hover .todo-delete,
+.todo-delete:focus-visible {
+  opacity: 1;
+}
+.todo-delete:hover {
+  color: #ef7474;
+  background: rgba(239, 116, 116, 0.12);
+}
+
+.todo-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--note-border);
+}
+.todo-input,
+.todo-add {
+  min-height: 38px;
+  border: 1px solid var(--note-border);
+  border-radius: 4px;
+  font: inherit;
+}
+.todo-input {
+  min-width: 0;
+  padding: 0 12px;
+  outline: 0;
+  background: transparent;
+  color: var(--note-text);
+  font-size: 0.8125rem;
+}
+.todo-input::placeholder {
+  color: var(--note-muted);
+}
+.todo-input:focus {
+  border-color: var(--note-accent);
+}
+.todo-add {
+  padding: 0 12px;
+  border-color: var(--note-accent);
+  background: var(--note-accent);
+  color: #111214;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.todo-empty {
+  padding: 12px 0;
+  color: var(--note-muted);
+  font-size: 0.8125rem;
+  text-align: center;
+}
+
+@keyframes note-paw-pop {
+  from {
+    transform: scale(0.6) rotate(-12deg);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.15) rotate(-12deg);
+  }
+  to {
+    transform: scale(1) rotate(-12deg);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .todo-paw {
+    /* 去掉缩放/旋转,只留淡入 */
+    animation: note-paw-fade 0.16s ease;
+  }
+}
+@keyframes note-paw-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* ─── 减弱动效(reduced motion):去掉位移运动,保留颜色/透明度反馈 ───
+   伙伴层 idle 与击键类动画全部停用;击键本体反馈在 TSX 侧 useReducedMotion 分支 */
+@media (prefers-reduced-motion: reduce) {
+  .companion-daotong-idle,
+  .companion-daotong-idle .companion-halo,
+  .companion-idle-sway,
+  .companion-idle-bounce,
+  .companion-idle-breath,
+  .companion-idle-ear .companion-ear,
+  .companion-idle-ear .companion-corgi-svg .corgi-ear-left,
+  .companion-idle-ear .companion-corgi-svg .corgi-ear-right,
+  .companion-idle-tail .companion-tail,
+  .companion-blinking .companion-eye,
+  .companion-idle-look-left .companion-look,
+  .companion-idle-look-right .companion-look,
+  .companion-idle-look-left .companion-nose,
+  .companion-idle-look-right .companion-nose,
+  .companion-idle-look-left .companion-corgi-svg .companion-look,
+  .companion-idle-look-right .companion-corgi-svg .companion-look,
+  .companion-idle-look-left .companion-corgi-svg .companion-nose,
+  .companion-idle-look-right .companion-corgi-svg .companion-nose {
+    animation: none;
+  }
+  .companion-warped {
+    transition: none;
+  }
 }

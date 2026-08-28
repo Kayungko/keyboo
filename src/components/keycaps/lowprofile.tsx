@@ -1,5 +1,5 @@
 import { useStyleStore } from "@/stores/useStyleStore";
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import type { KeycapProps } from ".";
 import { KeycapBase } from "./base";
 import { PressCount } from "./press-count";
@@ -14,6 +14,8 @@ export const LowProfileKeycap = ({ event, isPressed, lastest }: KeycapProps) => 
   const border = useStyleStore((state) => state.border);
   const modifier = useStyleStore((state) => state.modifier);
   const showPressCount = useStyleStore((state) => state.layout.showPressCount);
+  // 减弱动效:去键帽按下位移(按下样式反馈保留)
+  const reduceMotion = useReducedMotion();
 
   const bgColor = event.isModifier() && modifier.highlight ? modifier.color : color.color;
   const secondaryColor = event.isModifier() && modifier.highlight ? modifier.secondaryColor : color.secondaryColor;
@@ -32,7 +34,7 @@ export const LowProfileKeycap = ({ event, isPressed, lastest }: KeycapProps) => 
     >
       {lastest && showPressCount && event.pressedCount > 1 && <PressCount count={event.pressedCount} />}
       <motion.div
-        animate={{ y: isPressed ? text.size * 0.25 : 0 }}
+        animate={{ transform: !reduceMotion && isPressed ? `translateY(${text.size * 0.25}px)` : "translateY(0px)" }}
         transition={isPressed
           // 按下:即时响应、软着陆
           ? { duration: 0.09, ease: [0.32, 0.72, 0, 1] }

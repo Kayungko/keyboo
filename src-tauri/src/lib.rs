@@ -4,7 +4,7 @@
 use std::sync::Mutex;
 
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem},
     tray::TrayIconBuilder,
     Emitter, Manager, WebviewWindowBuilder,
 };
@@ -119,6 +119,257 @@ fn show_main_window(app: tauri::AppHandle) {
         let _ = window.show();
     }
 }
+
+/// 把便签窗口位置钳制到虚拟屏幕内(物理像素)。
+/// 分辨率变化/拔显示器后恢复持久位置时,防止窗口完全跑出可见区域。
+/// 先 min 后 max:窗口比屏幕宽时也不会 panic(Rust clamp 的 min>max 会 panic)。
+fn clamp_to_virtual_screen(
+    pos: tauri::PhysicalPosition<i32>,
+    size: tauri::PhysicalSize<u32>,
+) -> tauri::PhysicalPosition<i32> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+            SM_YVIRTUALSCREEN,
+        };
+        unsafe {
+            let vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+            let vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+            let vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+            let vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+            let w = size.width as i32;
+            let h = size.height as i32;
+            let x = pos.x.min(vx + vw - w).max(vx);
+            let y = pos.y.min(vy + vh - h).max(vy);
+            return tauri::PhysicalPosition::new(x, y);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = size;
+        pos
+    }
+}
+
+/// 便签窗口定位:优先恢复持久化位置(钳制到虚拟屏内),
+/// 无持久值时落主显示器右上角(留 24 逻辑边距)。
+fn position_note_window(
+    app: &tauri::AppHandle,
+    window: &tauri::WebviewWindow,
+) -> Result<(), String> {
+    use tauri_plugin_store::StoreExt;
+    if let Ok(store) = app.store("keyboo.json") {
+        if let Some(value) = store.get("keyboo-note-position") {
+            let x = value.get("x").and_then(|v| v.as_i64());
+            let y = value.get("y").and_then(|v| v.as_i64());
+            if let (Some(x), Some(y)) = (x, y) {
+                let size = window
+                    .outer_size()
+                    .unwrap_or(tauri::PhysicalSize::new(292, 320));
+                let clamped =
+                    clamp_to_virtual_screen(tauri::PhysicalPosition::new(x as i32, y as i32), size);
+                let _ = window.set_position(clamped);
+                return Ok(());
+            }
+        }
+    }
+    // primary_monitor() 返回 Result<Option<Monitor>>:ok().flatten() 转成 Option 后接备用显示器
+    let monitor = window
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| {
+            window
+                .available_monitors()
+                .ok()
+                .and_then(|monitors| monitors.into_iter().next())
+        })
+        .ok_or_else(|| "no monitor found".to_string())?;
+    let scale = monitor.scale_factor();
+    let margin = (24.0 * scale) as i32;
+    let win_w = (292.0 * scale) as i32;
+    let pos = monitor.position();
+    let size = monitor.size();
+    window
+        .set_position(tauri::PhysicalPosition::new(
+            pos.x + size.width as i32 - win_w - margin,
+            pos.y + margin,
+        ))
+        .map_err(|e| e.to_string())
+}
+
+/// 便签钉住态的读取路径:Rust 独占条目 keyboo-note-pinned,无值时默认钉住
+fn read_note_pinned(app: &tauri::AppHandle) -> bool {
+    use tauri_plugin_store::StoreExt;
+    app.store("keyboo.json")
+        .ok()
+        .and_then(|store| store.get("keyboo-note-pinned"))
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
+}
+
+/// 创建便签窗口(照抄 settings 窗口模式,但常驻:禁用时只 hide 不销毁,
+/// 保住 webview 内存态,重新启用无闪烁)。显示由前端首帧后触发(show_note_window)。
+fn create_note_window(app: &tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("note") {
+        let _ = window.show();
+        return Ok(());
+    }
+    let pinned = read_note_pinned(app);
+    let url = tauri::WebviewUrl::App("index.html#/note".into());
+    let window = WebviewWindowBuilder::new(app, "note", url)
+        .title("Keyboo 便签")
+        .inner_size(292.0, 320.0)
+        .resizable(false)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .skip_taskbar(true)
+        .always_on_top(pinned)
+        // 不抢焦点:便签是常驻记录工具,点击它才聚焦
+        .focused(false)
+        // 首帧渲染前不显示,避免透明窗体闪烁(同 show_main_window 的理由)
+        .visible(false)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let _ = position_note_window(app, &window);
+    // z-order:钉住时 note 与 main 同为 TOPMOST,显式断言把便签压到 topmost 组顶部,
+    // 否则全屏覆盖层可能画在便签上面;未钉住时保持普通层级(会被其他应用遮挡)
+    #[cfg(target_os = "windows")]
+    if pinned {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SetWindowPos, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE,
+        };
+        if let Ok(hwnd) = window.hwnd() {
+            unsafe {
+                let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 便签开关的唯一更新路径(设置窗口命令与托盘菜单共用):
+/// 写 Rust 独占条目 keyboo-note-enabled、同步托盘勾选态、显示/隐藏窗口。
+/// 静默模式下保持隐藏,退出静默时由 toggle_silent 回显。
+fn apply_note_enabled(app: &tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    use tauri_plugin_store::StoreExt;
+    {
+        let state = app.state::<Mutex<AppState>>();
+        let mut guard = state.lock().unwrap();
+        guard.note_enabled = enabled;
+        if let Some(item) = &guard.note_item {
+            let _ = item.set_checked(enabled);
+        }
+    }
+    // 只读写 Rust 独占条目,不碰前端 zustand persist 的 JSON 字符串条目
+    let store = app.store("keyboo.json").map_err(|e| e.to_string())?;
+    store.set("keyboo-note-enabled", serde_json::json!(enabled));
+    store.save().map_err(|e| e.to_string())?;
+
+    if enabled {
+        if let Some(window) = app.get_webview_window("note") {
+            let silent = app.state::<Mutex<AppState>>().lock().unwrap().silent;
+            if !silent {
+                let _ = window.show();
+            }
+        } else {
+            create_note_window(app)?;
+        }
+    } else if let Some(window) = app.get_webview_window("note") {
+        let _ = window.hide();
+    }
+    // 设置窗口打开时同步开关 UI
+    let _ = app.emit_to("settings", "note-enabled-changed", enabled);
+    Ok(())
+}
+
+#[tauri::command]
+fn set_note_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    apply_note_enabled(&app, enabled)
+}
+
+#[tauri::command]
+fn get_note_enabled(app: tauri::AppHandle) -> bool {
+    app.state::<Mutex<AppState>>().lock().unwrap().note_enabled
+}
+
+/// 便签窗口右上角图钉按钮调用:切换置顶并持久化,
+/// 重建窗口(重启)时由 read_note_pinned 恢复
+#[tauri::command]
+fn get_note_pinned(app: tauri::AppHandle) -> bool {
+    read_note_pinned(&app)
+}
+
+#[tauri::command]
+fn set_note_pinned(app: tauri::AppHandle, pinned: bool) -> Result<(), String> {
+    use tauri_plugin_store::StoreExt;
+    let store = app.store("keyboo.json").map_err(|e| e.to_string())?;
+    store.set("keyboo-note-pinned", serde_json::json!(pinned));
+    store.save().map_err(|e| e.to_string())?;
+    if let Some(window) = app.get_webview_window("note") {
+        window
+            .set_always_on_top(pinned)
+            .map_err(|e| e.to_string())?;
+        // Windows 下显式 SetWindowPos:取消置顶必须给 HWND_NOTOPMOST,
+        // 否则 Tauri 内部走 SWP 的路径在某些版本不降级 topmost 位
+        #[cfg(target_os = "windows")]
+        {
+            use windows::Win32::UI::WindowsAndMessaging::{
+                SetWindowPos, HWND_NOTOPMOST, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE,
+            };
+            if let Ok(hwnd) = window.hwnd() {
+                let after = if pinned { HWND_TOPMOST } else { HWND_NOTOPMOST };
+                unsafe {
+                    let _ =
+                        SetWindowPos(hwnd, Some(after), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 便签首帧就绪后由前端调用显示窗口(同 show_main_window 的防闪烁理由)
+#[tauri::command]
+fn show_note_window(app: tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("note") {
+        let _ = window.show();
+    }
+}
+
+/// 便签拖动结束后由前端调用:读窗口当前位置(物理像素),
+/// 钳制到虚拟屏内后落盘。分辨率变化后重启时按钳制值恢复,不会跑出屏幕
+#[tauri::command]
+fn save_note_position(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_store::StoreExt;
+    let window = app
+        .get_webview_window("note")
+        .ok_or_else(|| "note window not found".to_string())?;
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let size = window.outer_size().map_err(|e| e.to_string())?;
+    let clamped = clamp_to_virtual_screen(pos, size);
+    let store = app.store("keyboo.json").map_err(|e| e.to_string())?;
+    store.set("keyboo-note-position", serde_json::json!({ "x": clamped.x, "y": clamped.y }));
+    store.save().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 便签内容高度变化时由前端调用自适应窗口高度。
+/// set_size 固定左上角原点,顶部锚定的便签向下生长,语义正确。
+#[tauri::command]
+fn resize_note_window(app: tauri::AppHandle, height: f64) -> Result<(), String> {
+    let window = app
+        .get_webview_window("note")
+        .ok_or_else(|| "note window not found".to_string())?;
+    let height = height.clamp(200.0, 800.0);
+    window
+        .set_size(tauri::LogicalSize::new(292.0, height))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 
 /// 设置显隐快捷键:更新内存状态并持久化到 store
 #[tauri::command]
@@ -239,14 +490,26 @@ pub fn run() {
             // 托盘菜单
             let toggle_item = MenuItem::with_id(app, "toggle", "暂停", true, None::<&str>)?;
             let silent_item = MenuItem::with_id(app, "silent", "进入静默模式", true, None::<&str>)?;
+            let note_enabled = {
+                let state = app.state::<Mutex<AppState>>();
+                let enabled = state.lock().unwrap().note_enabled;
+                enabled
+            };
+            let note_item = CheckMenuItem::with_id(app, "note", "便签", true, note_enabled, None::<&str>)?;
             let settings_item = MenuItem::with_id(app, "settings", "设置", true, None::<&str>)?;
             let restart_item = MenuItem::with_id(app, "restart", "重启", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
 
+            // 托盘句柄入全局状态:apply_note_enabled 同步勾选态时需要
+            {
+                let state = app.state::<Mutex<AppState>>();
+                state.lock().unwrap().note_item = Some(note_item.clone());
+            }
+
             // 启动全局输入捕获(钩子线程 + 工作线程)
             start_input_listener(app_handle.clone(), toggle_item.clone());
 
-            let menu = Menu::with_items(app, &[&toggle_item, &silent_item, &settings_item, &restart_item, &quit_item])?;
+            let menu = Menu::with_items(app, &[&toggle_item, &silent_item, &note_item, &settings_item, &restart_item, &quit_item])?;
             let _ = TrayIconBuilder::with_id("keyboo-tray")
                 .icon(icon::tray_image())
                 .tooltip("Keyboo 键啵")
@@ -262,6 +525,23 @@ pub fn run() {
                         let state = app.state::<Mutex<AppState>>();
                         let mut app_state = state.lock().unwrap();
                         app_state.toggle_silent(app, &silent_item);
+                    }
+                    "note" => {
+                        // Alt+F4 只是隐藏(note_enabled 仍为 true):此时点击托盘=重新显示,
+                        // 而不是先禁用再启用。静默模式下便签保持隐藏(由 toggle_silent 回显)
+                        let (enabled, visible) = {
+                            let state = app.state::<Mutex<AppState>>();
+                            let guard = state.lock().unwrap();
+                            let visible = app
+                                .get_webview_window("note")
+                                .map(|w| w.is_visible().unwrap_or(true))
+                                .unwrap_or(false);
+                            (guard.note_enabled, visible)
+                        };
+                        let target = if enabled && !visible { true } else { !enabled };
+                        if let Err(error) = apply_note_enabled(app, target) {
+                            eprintln!("[keyboo] failed to toggle note: {error}");
+                        }
                     }
                     "settings" => {
                         if let Some(window) = app.get_webview_window("settings") {
@@ -326,6 +606,15 @@ pub fn run() {
                 let _ = fit_virtual_screen(app.handle());
             }
 
+            // 便签窗口:按持久化开关恢复(懒创建;从未启用过就不付创建成本)。
+            // 启动时 silent 恒为 false,无需静默判断
+            let note_enabled = app.state::<Mutex<AppState>>().lock().unwrap().note_enabled;
+            if note_enabled {
+                if let Err(error) = create_note_window(app.handle()) {
+                    eprintln!("[keyboo] failed to create note window: {error}");
+                }
+            }
+
             // 兜底:前端异常未能通知时,2s 后仍然显示(重复 show 无副作用)
             {
                 let app_handle = app.handle().clone();
@@ -388,20 +677,30 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            // 设置窗口关闭时通知覆盖层
-            if window.label() != "settings" {
-                return;
-            }
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
-                #[cfg(target_os = "windows")]
-                {
-                    icon::clear_window_icons(window);
-                    let state = window.app_handle().state::<Mutex<AppState>>();
-                    state.lock().unwrap().settings_window_icons.take();
+            match window.label() {
+                // 便签窗口常驻:Alt+F4/系统关闭只隐藏不销毁(托盘应用范式,
+                // 保住 webview 内存态,重新显示无闪烁)
+                "note" => {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
                 }
-                let _ = window
-                    .app_handle()
-                    .emit_to("main", "settings-window", false);
+                // 设置窗口关闭时通知覆盖层
+                "settings" => {
+                    if let tauri::WindowEvent::CloseRequested { .. } = event {
+                        #[cfg(target_os = "windows")]
+                        {
+                            icon::clear_window_icons(window);
+                            let state = window.app_handle().state::<Mutex<AppState>>();
+                            state.lock().unwrap().settings_window_icons.take();
+                        }
+                        let _ = window
+                            .app_handle()
+                            .emit_to("main", "settings-window", false);
+                    }
+                }
+                _ => {}
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -410,7 +709,14 @@ pub fn run() {
             show_main_window,
             import_companion_image,
             remove_companion_image,
-            read_local_credential
+            read_local_credential,
+            set_note_enabled,
+            get_note_enabled,
+            set_note_pinned,
+            get_note_pinned,
+            show_note_window,
+            save_note_position,
+            resize_note_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running Keyboo");

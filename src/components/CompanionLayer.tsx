@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { CHARACTERS } from "@/lib/companion/presets";
 import { type PullInfo, type SkinProps } from "@/lib/softbody/core";
-import { AnimatePresence, motion, useAnimationControls } from "motion/react";
+import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState, type AnimationEvent, type ComponentType } from "react";
 import daotongUrl from "@/assets/daotong.svg";
 import corgiUrl from "@/assets/corgi.svg";
@@ -132,6 +132,9 @@ export function CompanionLayer() {
   const lastKeyAtRef = useRef(performance.now());
   const controls = useAnimationControls();
   const mountedRef = useRef(false);
+  const celebrateUntilRef = useRef(0);
+  // 减弱动效:系统 prefers-reduced-motion 时停掉位移类动效,颜色/透明度反馈保留
+  const reduceMotion = useReducedMotion();
 
   // 切换状态机的镜像 ref:闭包(定时器/调度器/皮肤回调)读实时值,不进 effect 依赖
   const warpingRef = useRef(false); // 与 setWarping 同步
@@ -310,26 +313,51 @@ export function CompanionLayer() {
     if (charPulse === 0) return;
     lastKeyAtRef.current = performance.now();
     if (!config.typingFeedback) return;
+    // 减弱动效:跳过本体 Q 弹/上浮(位移类),+1 气泡照常发出
+    if (reduceMotion) {
+      setFloats((fs) => [...fs.slice(-4), { id: charPulse }]);
+      return;
+    }
+    // 升级庆祝播放中:击键照常计数/冒泡,但本体不做 Q 弹,
+    // 避免 0.7s 稀有高光被高频挤压动画截断
+    if (performance.now() < celebrateUntilRef.current) {
+      setFloats((fs) => [...fs.slice(-4), { id: charPulse }]);
+      return;
+    }
     setIdleAnim(null);
     const daotong = config.skin === "daotong";
-    void controls.start(
-      daotong
-        ? { y: [0, -3, 0], scale: 1, rotate: 0, transition: { duration: 0.24, ease: "easeOut" } }
-        : { scale: [1, 0.94, 1.03, 1], rotate: 0, transition: { duration: 0.18, ease: "easeOut" } },
-    );
+    if (daotong) {
+      void controls.start({ y: [0, -3, 0], scale: 1, rotate: 0, transition: { duration: 0.24, ease: "easeOut" } });
+    } else {
+      // Q 弹改两段 spring:先压到 0.94,立即弹回 1。
+      // spring 从当前值/速度出发,连击时压缩衔接不跳变(替代整段重启的 keyframe 数组)
+      void controls.start({
+        scale: 0.94,
+        rotate: 0,
+        transition: { type: "spring", stiffness: 700, damping: 26 },
+      });
+      void controls.start({
+        scale: 1,
+        rotate: 0,
+        transition: { type: "spring", stiffness: 500, damping: 22, delay: 0.05 },
+      });
+    }
     setFloats((fs) => [...fs.slice(-4), { id: charPulse }]);
-  }, [charPulse, controls, config.skin, config.typingFeedback]);
+  }, [charPulse, controls, config.skin, config.typingFeedback, reduceMotion]);
 
-  // 升级:大弹跳 + 摇摆
+  // 升级:大弹跳 + 摇摆(播放期间抑制击键 Q 弹,见 charPulse effect)
   useEffect(() => {
     if (levelUpPulse === 0) return;
+    // 减弱动效:跳过升级庆祝弹跳(纯位移运动)
+    if (reduceMotion) return;
     setIdleAnim(null);
+    celebrateUntilRef.current = performance.now() + 900;
     void controls.start({
       scale: [1, 1.25, 0.92, 1.08, 1],
       rotate: [0, -5, 5, 0],
       transition: { duration: 0.7, ease: "easeOut" },
     });
-  }, [levelUpPulse]);
+  }, [levelUpPulse, reduceMotion]);
 
   // 点击气泡:4s 自动关闭 + 点外部关闭
   useEffect(() => {
@@ -380,9 +408,12 @@ export function CompanionLayer() {
         const idleMs = performance.now() - lastKeyAtRef.current;
         // settle 窗口内不播:否则动画在隐形帧上启动,切回时以中段姿态淡入
         if (idleMs > IDLE_AFTER_MS && !dragRef.current && !warpingRef.current) {
-          const skin = useCompanionStore.getState().config.skin;
-          // 道童走常驻打坐态(吐纳+浮空+灵光),不参与随机待机小动作
-          if (skin !== "daotong") setIdleAnim(pickIdle(skin));
+          // 减弱动效:不下发待机小动作(常驻装饰运动全部关闭,道童打坐态由 CSS 媒体查询停用)
+          if (!reduceMotion) {
+            const skin = useCompanionStore.getState().config.skin;
+            // 道童走常驻打坐态(吐纳+浮空+灵光),不参与随机待机小动作
+            if (skin !== "daotong") setIdleAnim(pickIdle(skin));
+          }
         }
         schedule(3500 + Math.random() * 4500);
       }, delay);
@@ -392,7 +423,7 @@ export function CompanionLayer() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, []);
+  }, [reduceMotion]);
 
   // CSS 动画结束(含 SVG 子元素冒泡上来的眨眼/张望/耳朵):清掉状态类,
   // 否则同类动画无法再次触发
@@ -491,7 +522,7 @@ export function CompanionLayer() {
                 className="absolute left-0 flex items-center gap-1 whitespace-nowrap text-sm font-bold text-white"
                 style={{ textShadow: "0 1px 3px rgba(0,0,0,0.85)" }}
                 initial={{ opacity: 0, y: 0, x: "-50%", scale: 0.7 }}
-                animate={{ opacity: [0, 1, 0], y: -36, x: "-50%", scale: 1 }}
+                animate={{ opacity: [0, 1, 0], y: reduceMotion ? 0 : -36, x: "-50%", scale: 1 }}
                 transition={{ duration: 0.8, ease: "easeOut" }}
                 onAnimationComplete={() => setFloats((fs) => fs.filter((x) => x.id !== f.id))}
               >

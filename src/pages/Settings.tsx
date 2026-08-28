@@ -2,7 +2,7 @@
 
 import { ThemeModeToggle } from "@/components/ui/theme-mode-toggle";
 import { KeybooLogo } from "@/components/KeybooLogo";
-import { ComputerIcon, HappyIcon, InformationSquareIcon, KeyboardIcon, Mouse09Icon, Settings03Icon, BatteryCharging01Icon } from "@hugeicons/core-free-icons";
+import { ComputerIcon, HappyIcon, InformationSquareIcon, KeyboardIcon, Mouse09Icon, Note02Icon, Settings03Icon, BatteryCharging01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { listen } from "@tauri-apps/api/event";
 import { Toaster, toast } from "sonner";
@@ -11,6 +11,7 @@ import { COMPANION_STORE_NAME, useCompanionStore } from "@/stores/useCompanionSt
 import { EVENT_STORE_NAME, useEventStore } from "@/stores/useEventStore";
 import { STYLE_STORE_NAME, useStyleStore } from "@/stores/useStyleStore";
 import { QUOTA_STORE_NAME, useQuotaStore } from "@/stores/useQuotaStore";
+import { NOTE_CONFIG_STORE_NAME, useNoteConfigStore } from "@/stores/useNoteConfigStore";
 import { startSyncSender } from "@/stores/sync";
 import { UPDATE_AVAILABLE_EVENT, checkForUpdate, getAutoCheck, updaterAvailable, useAppVersion } from "@/lib/updater";
 import { AboutPage } from "./settings/about";
@@ -19,6 +20,7 @@ import { CompanionSettings } from "./settings/companion";
 import { GeneralSettings } from "./settings/general";
 import { KeycapSettings } from "./settings/keycap";
 import { MouseSettings } from "./settings/mouse";
+import { NoteSettings } from "./settings/note";
 import { QuotaSettings } from "./settings/quota";
 
 const sideBar = [
@@ -28,6 +30,7 @@ const sideBar = [
   { id: "mouse", label: "鼠标", icon: Mouse09Icon },
   { id: "companion", label: "伙伴", icon: HappyIcon },
   { id: "quota", label: "AI 额度", icon: BatteryCharging01Icon },
+  { id: "note", label: "便签", icon: Note02Icon },
 ];
 
 // 同一版本只提示一次(设置窗口可能多次挂载/重复收到广播)
@@ -79,6 +82,8 @@ export default function Settings() {
       // stats 也同步:设置页重置统计时即时通知覆盖层清零
       startSyncSender(COMPANION_STORE_NAME, useCompanionStore, ["config", "stats"]),
       startSyncSender(QUOTA_STORE_NAME, useQuotaStore, ["config"]),
+      // 便签强调色 → 便签窗口(listenSync 消费侧在 Note.tsx)
+      startSyncSender(NOTE_CONFIG_STORE_NAME, useNoteConfigStore, ["accentColor"]),
     ];
     return () => unsubscribers.forEach((un) => un());
   }, []);
@@ -140,6 +145,7 @@ export default function Settings() {
         {activeTab === "mouse" && <MouseSettings />}
         {activeTab === "companion" && <CompanionSettings />}
         {activeTab === "quota" && <QuotaSettings />}
+        {activeTab === "note" && <NoteSettings />}
         {activeTab === "about" && <AboutPage />}
       </div>
 

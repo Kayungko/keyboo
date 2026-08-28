@@ -1,5 +1,6 @@
 import { darken, lighten } from "@/lib/utils";
 import { useStyleStore } from "@/stores/useStyleStore";
+import { useReducedMotion } from "motion/react";
 import type { KeycapProps } from ".";
 import { KeycapBase } from "./base";
 import { PressCount } from "./press-count";
@@ -14,6 +15,8 @@ export const LaptopKeycap = ({ event, lastest, isPressed }: KeycapProps) => {
   const border = useStyleStore((state) => state.border);
   const modifier = useStyleStore((state) => state.modifier);
   const showPressCount = useStyleStore((state) => state.layout.showPressCount);
+  // 减弱动效:去按下位移与 transform 过渡,box-shadow 变色反馈保留
+  const reduceMotion = useReducedMotion();
 
   const bgColor = event.isModifier() && modifier.highlight ? modifier.color : color.color;
   const textColor = event.isModifier() && modifier.highlight ? modifier.textColor : text.color;
@@ -46,13 +49,17 @@ export const LaptopKeycap = ({ event, lastest, isPressed }: KeycapProps) => {
         ].filter(Boolean).join(", "),
 
         // 按下:即时响应;抬起:back-out 曲线模拟轻微回弹
-        transform: isPressed
+        transform: !reduceMotion && isPressed
           ? `translateY(${text.size * 0.06}px) scale(${event.isModifier() ? MODIFIER_SCALE : 1})`
           : `scale(${event.isModifier() ? MODIFIER_SCALE : 1})`,
         opacity: event.isModifier() ? MODIFIER_OPACITY : 1,
-        transition: isPressed
-          ? "transform 0.09s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.08s ease-out"
-          : "transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease",
+        transition: !reduceMotion
+          ? isPressed
+            ? "transform 0.09s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.08s ease-out"
+            : "transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease"
+          : isPressed
+            ? "box-shadow 0.08s ease-out"
+            : "box-shadow 0.2s ease",
       }}
     >
       {showPressCount && lastest && event.pressedCount > 1 && <PressCount count={event.pressedCount} />}

@@ -1,6 +1,6 @@
 // 底部抽屉(自定义过滤键盘选择器用)
 
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { cloneElement, createContext, isValidElement, useContext, useState, type ReactElement, type ReactNode } from "react";
 
 const DrawerContext = createContext<{ open: boolean; setOpen: (open: boolean) => void }>({
@@ -29,6 +29,8 @@ export function DrawerTrigger({ asChild, children }: { asChild?: boolean; childr
 
 export function DrawerContent({ children, className }: { children: ReactNode; className?: string }) {
   const { open, setOpen } = useContext(DrawerContext);
+  // 减弱动效:抽屉滑入(spring 位移)改瞬时,遮罩透明度淡入保留
+  const reduceMotion = useReducedMotion();
   return (
     <AnimatePresence>
       {open && (
@@ -45,7 +47,7 @@ export function DrawerContent({ children, className }: { children: ReactNode; cl
             initial={{ y: "100%" }}
             animate={{ y: 0 }}
             exit={{ y: "100%" }}
-            transition={{ type: "spring", stiffness: 380, damping: 36 }}
+            transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 36 }}
           >
             <div className="mx-auto mb-4 h-1 w-12 rounded-full bg-border" />
             {children}

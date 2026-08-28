@@ -1,5 +1,6 @@
 import { useEventStore } from "@/stores/useEventStore";
 import { useStyleStore } from "@/stores/useStyleStore";
+import { useReducedMotion } from "motion/react";
 import { useEffect, useRef } from "react";
 
 // 鼠标移动轨迹拖尾:订阅已合并的鼠标坐标,在 canvas 上绘制按年龄渐隐的轨迹
@@ -19,6 +20,8 @@ export const MouseTrail = () => {
   const trailFadeMs = useStyleStore((state) => state.mouse.trailFadeMs);
   // 设备维度总门控:常规设置「鼠标反馈」关闭时拖尾一并隐藏
   const showMouseEffects = useEventStore((state) => state.showMouseEffects);
+  // 减弱动效:拖尾为纯装饰运动,整体关闭
+  const reduceMotion = useReducedMotion();
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pointsRef = useRef<TrailPoint[]>([]);
@@ -56,6 +59,12 @@ export const MouseTrail = () => {
 
     let raf = 0;
     const loop = () => {
+      // 减弱动效:初始化后直接退出绘制循环,canvas 清空留白
+      if (reduceMotion) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return;
+      }
       const dpr = window.devicePixelRatio || 1;
       const now = performance.now();
       const fadeMs = Math.max(50, trailFadeMs);
@@ -92,7 +101,7 @@ export const MouseTrail = () => {
       window.removeEventListener("resize", resize);
       pointsRef.current = [];
     };
-  }, [showTrail, showMouseEffects, trailColor, trailWidth, trailFadeMs]);
+  }, [showTrail, showMouseEffects, trailColor, trailWidth, trailFadeMs, reduceMotion]);
 
   if (!showTrail || !showMouseEffects) return null;
 

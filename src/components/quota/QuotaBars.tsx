@@ -130,8 +130,8 @@ function EqBars({ glow, pulse, appearance, items, typingSignal }: BarsProps) {
         return (
           <div key={it.id} className="quota-eq-col" style={{ "--quota-glow": glowColorOf(it.pct, appearance) } as React.CSSProperties}>
             <div
-              className={cn("quota-eq-fill", lowCls(it.pct, pulse))}
-              style={{ height: `${Math.min(100, h)}%`, background: c }}
+              className={cn("quota-eq-fill", bounce?.idx === i && "quota-eq-bounce", lowCls(it.pct, pulse))}
+              style={{ transform: `scaleY(${h / 100})`, background: c }}
             />
           </div>
         );

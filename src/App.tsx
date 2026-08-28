@@ -2,14 +2,19 @@ import { lazy, Suspense } from "react";
 import { Visualization } from "./pages/Visualization";
 
 const Settings = lazy(() => import("./pages/Settings"));
+const Note = lazy(() => import("./pages/Note"));
 
-// 双窗口路由:覆盖层窗口加载 #/,设置窗口加载 #/settings
+// 多窗口路由:覆盖层窗口加载 #/,设置窗口加载 #/settings,便签窗口加载 #/note
 function route() {
-  return window.location.hash.startsWith("#/settings") ? "settings" : "main";
+  const hash = window.location.hash;
+  if (hash.startsWith("#/settings")) return "settings";
+  if (hash.startsWith("#/note")) return "note";
+  return "main";
 }
 
 function App() {
-  if (route() === "settings") {
+  const page = route();
+  if (page === "settings" || page === "note") {
     return (
       <Suspense
         fallback={
@@ -18,7 +23,7 @@ function App() {
           </div>
         }
       >
-        <Settings />
+        {page === "settings" ? <Settings /> : <Note />}
       </Suspense>
     );
   }

@@ -1,7 +1,7 @@
 import { useEventStore } from "@/stores/useEventStore";
 import { useStyleStore } from "@/stores/useStyleStore";
 import { easeOutQuint } from "@/lib/utils";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { MouseIndicator } from "./MouseIndicator";
 
@@ -24,6 +24,8 @@ export function MouseOverlay() {
   const showMouseEffects = useEventStore((s) => s.showMouseEffects);
   const style = useStyleStore((s) => s.mouse);
   const animationDuration = useStyleStore((s) => s.appearance.animationDuration);
+  // 减弱动效:涟漪去扩散位移只留淡出;主圆环去咬合缩放只留透明度切换
+  const reduceMotion = useReducedMotion();
 
   const [show, setShow] = useState(false);
   const [ripples, setRipples] = useState<Ripple[]>([]);
@@ -117,7 +119,7 @@ export function MouseOverlay() {
               initial={false}
               animate={{
                 opacity: show || style.keepHighlight ? 1 : 0,
-                scale: show ? 0.55 : 1,
+                scale: !reduceMotion && show ? 0.55 : 1,
               }}
               style={{
                 borderColor: style.color,
@@ -140,7 +142,7 @@ export function MouseOverlay() {
                   key={ripple.id}
                   className="absolute inset-0"
                   initial={{ scale: 0.55, opacity: 0.9, borderWidth: style.size / 22 }}
-                  animate={{ scale: 1.3, opacity: 0, borderWidth: style.size / 44 }}
+                  animate={reduceMotion ? { opacity: 0 } : { scale: 1.3, opacity: 0, borderWidth: style.size / 44 }}
                   transition={{ duration: 0.35, ease: RIPPLE_EASE }}
                   onAnimationComplete={() => setRipples((rs) => rs.filter((r) => r.id !== ripple.id))}
                   style={{

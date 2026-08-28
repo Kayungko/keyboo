@@ -1,6 +1,6 @@
 import { keymaps } from "@/lib/keymaps";
 import { useStyleStore } from "@/stores/useStyleStore";
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import type { KeycapProps } from ".";
 
 // 修饰键结构性层级:与配色无关,始终略小略淡,突出主键
@@ -11,6 +11,8 @@ export const MinimalKeycap = ({ event, isPressed, lastest }: KeycapProps) => {
   const text = useStyleStore((state) => state.text);
   const modifier = useStyleStore((state) => state.modifier);
   const layout = useStyleStore((state) => state.layout);
+  // 减弱动效:去按下缩放位移,透明度反馈保留
+  const reduceMotion = useReducedMotion();
 
   const display = keymaps[event.name];
   const color = event.isModifier() && modifier.highlight ? modifier.textColor : text.color;
@@ -46,7 +48,7 @@ export const MinimalKeycap = ({ event, isPressed, lastest }: KeycapProps) => {
   return (
     <motion.div
       animate={{
-        scale: (isPressed ? 0.92 : 1) * (event.isModifier() ? MODIFIER_SCALE : 1),
+        transform: `scale(${(!reduceMotion && isPressed ? 0.92 : 1) * (event.isModifier() ? MODIFIER_SCALE : 1)})`,
         opacity: (isPressed ? 0.85 : 1) * (event.isModifier() ? MODIFIER_OPACITY : 1),
       }}
       transition={isPressed

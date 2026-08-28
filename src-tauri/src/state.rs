@@ -1,6 +1,6 @@
 //! 应用全局状态
 
-use tauri::{menu::MenuItem, AppHandle, Emitter, Wry};
+use tauri::{menu::{CheckMenuItem, MenuItem}, AppHandle, Emitter, Manager, Wry};
 use tauri_plugin_store::StoreExt;
 
 pub struct AppState {
@@ -15,6 +15,11 @@ pub struct AppState {
     /// 用户选定的显示器名(None = 铺满虚拟屏幕)。
     /// 分辨率变化时据此恢复窗口归属,避免重铺覆盖用户选择
     pub selected_monitor: Option<String>,
+    /// 桌面便签启用开关(与托盘勾选态、keyboo-note-enabled 条目三方同步)
+    pub note_enabled: bool,
+    /// 托盘"便签"勾选菜单项。设置窗口的开关命令与托盘共用一条更新路径
+    /// (apply_note_enabled),句柄存这里供命令侧同步勾选态
+    pub note_item: Option<CheckMenuItem<Wry>>,
     /// 设置窗口自定义的 Windows 小/大图标句柄。
     /// 窗口关闭前先从 HWND 清除，再释放句柄，避免任务栏回退到被放大的 16px 默认图标。
     #[cfg(target_os = "windows")]
@@ -27,12 +32,19 @@ impl AppState {
         // 读 Rust 独占条目 keyboo-toggle-shortcut(数组),
         // 不碰前端的 keyboo-event-store(JSON 字符串,格式不同)。
         let mut toggle_shortcut = vec!["ShiftLeft".to_string(), "F10".to_string()];
+        let mut note_enabled = false;
         if let Ok(store) = app.store("keyboo.json") {
             if let Some(value) = store.get("keyboo-toggle-shortcut") {
                 if let Ok(keys) = serde_json::from_value::<Vec<String>>(value) {
                     if !keys.is_empty() {
                         toggle_shortcut = keys;
                     }
+                }
+            }
+            // 便签开关同为 Rust 独占条目(bool),启动恢复窗口创建与托盘勾选态
+            if let Some(value) = store.get("keyboo-note-enabled") {
+                if let Some(enabled) = value.as_bool() {
+                    note_enabled = enabled;
                 }
             }
         }
@@ -43,6 +55,8 @@ impl AppState {
             toggle_shortcut,
             monitor_position: (0, 0),
             selected_monitor: None,
+            note_enabled,
+            note_item: None,
             #[cfg(target_os = "windows")]
             settings_window_icons: None,
         }
@@ -63,5 +77,16 @@ impl AppState {
         self.silent = !self.silent;
         let _ = silent_item.set_text(if self.silent { "退出静默模式" } else { "进入静默模式" });
         let _ = app.emit_to("main", "silent-toggle", self.silent);
+        // 便签与浮层同生命周期:静默=屏幕不留痕承诺,必须隐藏;
+        // 恢复时仅当便签启用才回显。Rust 直接控制窗口显隐,不依赖前端事件竞态
+        if let Some(note) = app.get_webview_window("note") {
+            let _ = if self.silent {
+                note.hide()
+            } else if self.note_enabled {
+                note.show()
+            } else {
+                Ok(())
+            };
+        }
     }
 }
