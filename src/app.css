@@ -497,6 +497,12 @@
   box-sizing: border-box;
   /* 宽度可拖拽调整(右缘热区),React 内联 style 注入 --note-width */
   width: var(--note-width, 292px);
+  /* 高度语义 = 窗口总高(用户拖底缘设定,事实源在 Rust):卡片 100vh 逐帧撑满
+     窗口,条幅(54)/菜单扩窗(156)/用户高度都只改窗口,卡片被动跟随。
+     列表区用 flex 吃掉剩余空间,切视图(收纳无输入区)时总高不变、列表吸收差值 */
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
   padding: 0;
   border: 1px solid var(--note-border);
   border-radius: 8px;
@@ -537,6 +543,74 @@
 .note-resize-handle:focus-visible {
   outline: none;
   box-shadow: inset 2px 0 0 var(--note-accent);
+}
+/* 拖高热区:卡片底缘通条(顶部锚定,向下生长),视觉语言与左缘热区一致 */
+.note-height-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+  z-index: 15;
+  cursor: ns-resize;
+  touch-action: none;
+  border-radius: 0 0 8px 8px;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+.note-height-handle:hover,
+.note-height-handle:focus-visible {
+  background: color-mix(in srgb, var(--note-accent) 30%, transparent);
+}
+.note-height-handle:focus-visible {
+  outline: none;
+  box-shadow: inset 0 2px 0 var(--note-accent);
+}
+/* 拖高中的容量徽标:手柄上方居中,拖动期间常驻,松手即隐 */
+.note-height-badge {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 16;
+  padding: 3px 10px;
+  border: 1px solid var(--note-border);
+  border-radius: 999px;
+  background: #101113;
+  color: var(--note-text);
+  font-family: var(--note-font-mono);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: note-toast-in 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+/* 外部操作反馈浮层:窗口无边框且高度即卡片,通用 toast 会被窗口边界裁切,
+   卡片内自绘 1.5s 自隐(React 侧控制寿命) */
+.note-op-toast {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 18;
+  max-width: calc(100% - 40px);
+  padding: 5px 12px;
+  border: 1px solid color-mix(in srgb, var(--note-accent) 45%, var(--note-border));
+  border-radius: 999px;
+  background: #101113;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  color: var(--note-text);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: note-toast-in 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+@keyframes note-toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px);
+  }
 }
 .note-card.is-hiding,
 .note-card.is-restoring {
@@ -684,12 +758,17 @@
   transform: rotate(180deg);
 }
 .note-body {
+  /* 卡片纵向 flex 的弹性段:窗口总高减去头部都给列表区 */
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
   grid-template-rows: 1fr;
   transition: grid-template-rows 180ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .note-body-inner {
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   opacity: 1;
   transform: translateY(0);
@@ -706,6 +785,10 @@
   transition-delay: 0ms;
 }
 .note-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   padding: 0 20px 16px;
 }
 .note-more-menu {
@@ -817,7 +900,11 @@
   padding: 8px 0;
   display: grid;
   gap: 2px;
-  max-height: 320px;
+  /* 原固定 max-height:320px 已删:容量由列表区实测高度派生(ResizeObserver)。
+     flex 撑满剩余空间,空列表也保持用户设定高度不塌缩 */
+  flex: 1 1 auto;
+  min-height: 0;
+  align-content: start;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--note-border) transparent;
@@ -1260,6 +1347,11 @@
    旧页是绝对定位的静态快照,不约束高度(短页换长页时不裁切) */
 .todo-list-wrap {
   position: relative;
+  /* 容量派生的量尺:观察本元素实测高度换算每页条数;flex 撑满剩余空间 */
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 .todo-list.is-entering {
   animation: note-page-in 200ms cubic-bezier(0.23, 1, 0.32, 1);
@@ -1373,7 +1465,9 @@
     transition: none;
   }
   .note-more-menu,
-  .note-project-composer {
+  .note-project-composer,
+  .note-height-badge,
+  .note-op-toast {
     animation: none;
   }
 }

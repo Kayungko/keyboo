@@ -9,6 +9,7 @@ use tauri::{
     Emitter, Manager, WebviewWindowBuilder,
 };
 
+mod cli;
 mod icon;
 mod input;
 mod state;
@@ -224,6 +225,25 @@ fn read_note_width(app: &tauri::AppHandle) -> f64 {
         .unwrap_or(NOTE_WIDTH_MIN)
 }
 
+/// 便签高度(窗口总高)的落盘下限/上限(逻辑像素)。与前端常量互为镜像,
+/// 改动必须两端同步(前端常量由前端侧维护)。下限保证列表区可滚动可用,
+/// 上限防超过常规屏幕工作区。默认值沿用原窗口创建高度的 320
+const NOTE_HEIGHT_MIN: f64 = 280.0;
+const NOTE_HEIGHT_MAX: f64 = 860.0;
+const NOTE_HEIGHT_DEFAULT: f64 = 320.0;
+
+/// 便签高度读取路径:Rust 独占条目 keyboo-note-height(f64,与宽度同构),
+/// 无值时默认 320(原创建高度),读取后同样钳制
+fn read_note_height(app: &tauri::AppHandle) -> f64 {
+    use tauri_plugin_store::StoreExt;
+    app.store("keyboo.json")
+        .ok()
+        .and_then(|store| store.get("keyboo-note-height"))
+        .and_then(|value| value.as_f64())
+        .map(|h| h.clamp(NOTE_HEIGHT_MIN, NOTE_HEIGHT_MAX))
+        .unwrap_or(NOTE_HEIGHT_DEFAULT)
+}
+
 /// 创建便签窗口(照抄 settings 窗口模式,但常驻:禁用时只 hide 不销毁,
 /// 保住 webview 内存态,重新启用无闪烁)。显示由前端首帧后触发(show_note_window)。
 fn create_note_window(app: &tauri::AppHandle) -> Result<(), String> {
@@ -235,7 +255,7 @@ fn create_note_window(app: &tauri::AppHandle) -> Result<(), String> {
     let url = tauri::WebviewUrl::App("index.html#/note".into());
     let window = WebviewWindowBuilder::new(app, "note", url)
         .title("Keyboo 便签")
-        .inner_size(read_note_width(app), 320.0)
+        .inner_size(read_note_width(app), read_note_height(app))
         .resizable(false)
         .decorations(false)
         .transparent(true)
@@ -376,53 +396,30 @@ fn save_note_position(app: tauri::AppHandle) -> Result<(), String> {
 /// - generation:代际计数,新 resize 请求自增,旧动画线程发现失配即自杀
 /// - current_height:上次设定的高度(逻辑像素)。动画线程逐帧回写,
 ///   新请求从「屏幕上真实呈现的高度」续接,打断不跳变
+/// - user_height:用户设定的展开态基准高度(窗口总高,逻辑像素)。
+///   底缘拖拽热区写入(set_note_height);条幅态 52 / 菜单扩窗 156 等
+///   内容驱动的临时高度只改 current_height 不碰它,结束后由
+///   restore_note_height 动画回到这个基准
 /// - width:当前窗口宽度(逻辑像素)。拖宽实时更新内存,松手才落盘;
 ///   高度动画线程每帧从这里读,避免拖宽期间动画把窗口缩回旧宽
 #[derive(Default)]
 struct NoteResizeState {
     generation: u64,
     current_height: Option<f64>,
+    user_height: f64,
     width: f64,
 }
 
-/// 便签内容高度变化时由前端调用自适应窗口高度。
-/// set_size 固定左上角原点,顶部锚定的便签向下生长,语义正确。
-/// 高度插值动画(约 180ms 三次 ease-out):窗口边框跟着内容平滑生长/收缩,
-/// 消除「内容先跳、100ms 后窗口底边再跳」的双跳观感。
-#[tauri::command]
-fn resize_note_window(app: tauri::AppHandle, height: f64, animate: bool) -> Result<(), String> {
-    let window = app
-        .get_webview_window("note")
-        .ok_or_else(|| "note window not found".to_string())?;
-    // 52px 条幅态仍需走同一条高度动画;上限保持原内容安全边界。
-    let target = height.clamp(52.0, 800.0);
-
-    let state = app.state::<Mutex<NoteResizeState>>();
-    let (generation, start) = {
-        let mut s = state.lock().unwrap();
-        let width = s.width;
-        if !animate {
-            s.generation += 1;
-            s.current_height = Some(target);
-            window
-                .set_size(tauri::LogicalSize::new(width, target))
-                .map_err(|e| e.to_string())?;
-            return Ok(());
-        }
-        // 首次调用(无记录)直接落位:开窗首跳与旧行为一致,不额外放大动画
-        if s.current_height.is_none() {
-            window
-                .set_size(tauri::LogicalSize::new(width, target))
-                .map_err(|e| e.to_string())?;
-            s.current_height = Some(target);
-            return Ok(());
-        }
-        let start = s.current_height.unwrap_or(target);
-        s.generation += 1;
-        (s.generation, start)
-    };
-
-    // 帧循环:约 16ms 一帧,总时长 180ms,三次 ease-out(与前端强 ease-out 曲线同族)
+/// 高度动画帧循环(约 16ms 一帧,总时长 180ms,三次 ease-out,与前端强
+/// ease-out 曲线同族)。resize_note_window(内容自适应)与 restore_note_height
+/// (回用户基准高度)共用;generation 为本次动画的代际,调用方先自增,
+/// 旧线程在下一帧锁内发现失配即自杀(当前高度由新线程续写,打断不跳变)。
+fn spawn_note_height_animation(
+    app: tauri::AppHandle,
+    generation: u64,
+    start: f64,
+    target: f64,
+) {
     let duration_ms: f64 = 180.0;
     let step_ms: u64 = 16;
     std::thread::spawn(move || {
@@ -464,6 +461,48 @@ fn resize_note_window(app: tauri::AppHandle, height: f64, animate: bool) -> Resu
             std::thread::sleep(std::time::Duration::from_millis(step_ms));
         }
     });
+}
+
+/// 便签内容高度变化时由前端调用自适应窗口高度。
+/// set_size 固定左上角原点,顶部锚定的便签向下生长,语义正确。
+/// 高度插值动画(约 180ms 三次 ease-out):窗口边框跟着内容平滑生长/收缩,
+/// 消除「内容先跳、100ms 后窗口底边再跳」的双跳观感。
+/// 注意:这里只写 current_height,不碰 user_height——内容驱动高度是临时态,
+/// 展开态基准高度由 set_note_height 单独维护
+#[tauri::command]
+fn resize_note_window(app: tauri::AppHandle, height: f64, animate: bool) -> Result<(), String> {
+    let window = app
+        .get_webview_window("note")
+        .ok_or_else(|| "note window not found".to_string())?;
+    // 52px 条幅态仍需走同一条高度动画;上限保持原内容安全边界。
+    let target = height.clamp(52.0, 800.0);
+
+    let state = app.state::<Mutex<NoteResizeState>>();
+    let (generation, start) = {
+        let mut s = state.lock().unwrap();
+        let width = s.width;
+        if !animate {
+            s.generation += 1;
+            s.current_height = Some(target);
+            window
+                .set_size(tauri::LogicalSize::new(width, target))
+                .map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+        // 首次调用(无记录)直接落位:开窗首跳与旧行为一致,不额外放大动画
+        if s.current_height.is_none() {
+            window
+                .set_size(tauri::LogicalSize::new(width, target))
+                .map_err(|e| e.to_string())?;
+            s.current_height = Some(target);
+            return Ok(());
+        }
+        let start = s.current_height.unwrap_or(target);
+        s.generation += 1;
+        (s.generation, start)
+    };
+
+    spawn_note_height_animation(app, generation, start, target);
     Ok(())
 }
 
@@ -562,6 +601,147 @@ fn get_note_width(app: tauri::AppHandle) -> f64 {
     } else {
         read_note_width(&app)
     }
+}
+
+/// 前端读取便签用户高度(内存优先,回退持久条目;供展开态基准高度对齐)
+#[tauri::command]
+fn get_note_height(app: tauri::AppHandle) -> f64 {
+    let state = app.state::<Mutex<NoteResizeState>>();
+    let h = state.lock().unwrap().user_height;
+    if h > 0.0 {
+        h
+    } else {
+        read_note_height(&app)
+    }
+}
+
+/// 便签高度(窗口总高):前端底缘拖拽热区调用,语义与 set_note_width 同构。
+/// 拖拽中 save=false 只改内存并 set_size 跟手;松手 save=true 落盘到
+/// keyboo-note-height,重启由 create_note_window 恢复。
+/// 顶部锚定:只改 height 不动 x/y,便签向下生长,无需宽度的左缘 x 补偿;
+/// 但要防底缘拖出屏幕——按窗口所在显示器工作区钳制可用高度
+/// (工作区不足时高度收缩到工作区底缘;连最小高度都放不下时退化为最小高,
+/// 允许贴出工作区,与宽度的退化策略一致)。
+#[tauri::command]
+fn set_note_height(app: tauri::AppHandle, height: f64, save: bool) -> Result<(), String> {
+    let window = app
+        .get_webview_window("note")
+        .ok_or_else(|| "note window not found".to_string())?;
+    let target = height.clamp(NOTE_HEIGHT_MIN, NOTE_HEIGHT_MAX);
+    let state = app.state::<Mutex<NoteResizeState>>();
+    let width = state.lock().unwrap().width;
+
+    let scale = window.scale_factor().map_err(|e| e.to_string())?;
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    // 工作区钳制:current_monitor 拿不到(极罕见)时跳过,只靠最后的虚拟屏钳制兜底
+    let mut effective = target;
+    if let Ok(Some(monitor)) = window.current_monitor() {
+        let work = monitor.work_area();
+        let bottom = work.position.y + work.size.height as i32;
+        let available = (bottom - pos.y) as f64 / scale;
+        if available < effective {
+            effective = target.min(available).max(NOTE_HEIGHT_MIN);
+        }
+    }
+
+    {
+        let mut s = state.lock().unwrap();
+        // 三件事一次锁内完成:
+        // 1) generation 自增:正在跑的内容高度动画让位,否则它下一帧会把高度拉回去
+        // 2) user_height 同步:这是展开态基准高度,restore_note_height 回到这里
+        // 3) current_height 同步:后续动画从用户拖到的高度续接
+        s.generation += 1;
+        s.user_height = effective;
+        s.current_height = Some(effective);
+    }
+
+    // 位置与尺寸合并为一次 SetWindowPos:顶部锚定下位置本就不变(工作区
+    // 钳制退化时才可能上移),合并调用是为了与宽度路径统一,避免两步间闪烁
+    let new_phys = tauri::PhysicalSize::new(
+        (width * scale).round() as u32,
+        (effective * scale).round() as u32,
+    );
+    let clamped = clamp_to_virtual_screen(pos, new_phys);
+    let applied = {
+        #[cfg(target_os = "windows")]
+        {
+            use windows::Win32::UI::WindowsAndMessaging::{
+                SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER,
+            };
+            match window.hwnd() {
+                Ok(hwnd) => unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        None,
+                        clamped.x,
+                        clamped.y,
+                        new_phys.width as i32,
+                        new_phys.height as i32,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
+                    )
+                    .is_ok()
+                },
+                Err(_) => false,
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            false
+        }
+    };
+    if !applied {
+        let _ = window.set_position(clamped);
+        window
+            .set_size(tauri::LogicalSize::new(width, effective))
+            .map_err(|e| e.to_string())?;
+    }
+    if save {
+        use tauri_plugin_store::StoreExt;
+        let store = app.store("keyboo.json").map_err(|e| e.to_string())?;
+        // 落盘的是实际生效高度(工作区钳制后):保证重启恢复的就是用户看到的高度
+        store.set("keyboo-note-height", serde_json::json!(effective));
+        store.save().map_err(|e| e.to_string())?;
+        // 与宽度路径保持一致:顺带落盘位置(set_position 不保证触发前端 onMoved)
+        let _ = save_note_position(app);
+    }
+    Ok(())
+}
+
+/// 把窗口高度动画恢复到用户设定的展开态基准高度(user_height)。
+/// 供前端从条幅态(52)/菜单扩窗(156)等临时内容高度返回展开态时调用。
+#[tauri::command]
+fn restore_note_height(app: tauri::AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("note")
+        .ok_or_else(|| "note window not found".to_string())?;
+    let target = {
+        let state = app.state::<Mutex<NoteResizeState>>();
+        let s = state.lock().unwrap();
+        // user_height 在 setup 时初始化;防御性回退持久条目(理论上不会走到)
+        if s.user_height > 0.0 {
+            s.user_height
+        } else {
+            read_note_height(&app)
+        }
+    };
+    let state = app.state::<Mutex<NoteResizeState>>();
+    let (generation, start) = {
+        let mut s = state.lock().unwrap();
+        // 首次调用(无记录)直接落位,不开动画:与 resize_note_window 的首跳策略一致
+        if s.current_height.is_none() {
+            let width = s.width;
+            window
+                .set_size(tauri::LogicalSize::new(width, target))
+                .map_err(|e| e.to_string())?;
+            s.current_height = Some(target);
+            return Ok(());
+        }
+        let start = s.current_height.unwrap_or(target);
+        s.generation += 1;
+        (s.generation, start)
+    };
+    spawn_note_height_animation(app, generation, start, target);
+    Ok(())
 }
 
 
@@ -664,10 +844,105 @@ fn read_local_credential(kind: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("读取失败:{e}"))
 }
 
+/// 外部写入路由的终点:入队 → 确保便签窗口存在 → 通知前端消费。
+/// note 窗口是 keyboo-note-store 的唯一写者,这里只投递、绝不直接写该键。
+fn enqueue_external_op(app: &tauri::AppHandle, op: cli::ExternalOp) {
+    {
+        let queue = app.state::<Mutex<Vec<cli::ExternalOp>>>();
+        queue.lock().unwrap().push(op);
+    }
+    // 窗口不存在时借 apply_note_enabled 拉起:它统一走「落盘开关 + 托盘勾选
+    // 同步 + 创建窗口」的既有路径,避免绕过开关状态造出与托盘勾选不一致的窗口。
+    // 窗口已存在(含隐藏)则不动显隐——隐藏时 webview 仍在运行,事件照常送达
+    if app.get_webview_window("note").is_none() {
+        if let Err(error) = apply_note_enabled(app, true) {
+            eprintln!("[keyboo] failed to create note window for external op: {error}");
+        }
+    }
+    // webview 未就绪时事件会丢:前端挂载时主动调用 take_external_ops 兜底消费
+    let _ = app.emit_to("note", "keyboo-external-ops", ());
+}
+
+/// single-instance 回调入口(运行在常驻实例内):第二实例的 argv 转发到这里。
+/// 校验理论上不会失败(第二实例在启动早期已拦截并退出),失败只打常驻日志
+fn handle_cli_forward(app: &tauri::AppHandle, args: Vec<String>) {
+    match cli::parse_cli(&args) {
+        cli::CliParse::Command(cli::CliCommand::Write(op)) => enqueue_external_op(app, op),
+        // list 由第二实例直接读文件打印,不会转发到这;防御性忽略
+        cli::CliParse::Command(_) => {}
+        cli::CliParse::Invalid(message) => {
+            eprintln!("[keyboo] forwarded CLI args invalid: {message}")
+        }
+        cli::CliParse::None => {}
+    }
+}
+
+/// 前端消费外部操作队列:便签挂载时兜底调用 + keyboo-external-ops 事件驱动。
+/// drain 语义保证冷启动入队/转发入队与多次触发之间不重复、不漏单
+#[tauri::command]
+fn take_external_ops(app: tauri::AppHandle) -> Vec<cli::ExternalOp> {
+    let queue = app.state::<Mutex<Vec<cli::ExternalOp>>>();
+    let mut guard = queue.lock().unwrap();
+    std::mem::take(&mut *guard)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // CLI 子命令在 Tauri 启动前拦截(第二实例视角):
+    // - list:只读 keyboo.json 打印后退出,不启动应用、不转发(读不违反唯一写者)
+    // - 校验失败:stderr + 非零退出码,不进入转发路径
+    // - 写命令:打印成功提示后继续往下走——常驻实例存在则 single-instance 插件
+    //   在 build 阶段转发 argv 后本进程退出(0);不存在则本进程成为常驻实例,
+    //   setup 阶段把该操作入队(冷启动路径),便签挂载时 take 兜底消费
+    let context = tauri::generate_context!();
+    let identifier = context.config().identifier.clone();
+    let mut startup_cli_op: Option<cli::ExternalOp> = None;
+    match cli::parse_cli(&std::env::args().collect::<Vec<String>>()) {
+        cli::CliParse::Command(cli::CliCommand::ListTodos) => {
+            cli::attach_parent_console();
+            match cli::read_note_store_snapshot(&identifier) {
+                Ok(snapshot) => cli::print_todo_list(&snapshot),
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
+            }
+            std::process::exit(0);
+        }
+        cli::CliParse::Command(cli::CliCommand::ListProjects) => {
+            cli::attach_parent_console();
+            match cli::read_note_store_snapshot(&identifier) {
+                Ok(snapshot) => cli::print_project_list(&snapshot),
+                Err(error) => {
+                    eprintln!("{error}");
+                    std::process::exit(1);
+                }
+            }
+            std::process::exit(0);
+        }
+        cli::CliParse::Invalid(message) => {
+            cli::attach_parent_console();
+            eprintln!("{message}");
+            std::process::exit(1);
+        }
+        cli::CliParse::Command(cli::CliCommand::Write(op)) => {
+            cli::attach_parent_console();
+            match &op {
+                cli::ExternalOp::AddTodo { text, project: Some(project) } => {
+                    println!("已提交: {text}(主题:{project})")
+                }
+                cli::ExternalOp::AddTodo { text, project: None } => println!("已提交: {text}"),
+                cli::ExternalOp::AddProject { title } => println!("已提交主题: {title}"),
+            }
+            startup_cli_op = Some(op);
+        }
+        cli::CliParse::None => {}
+    }
+
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|_, __, ___| {}))
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            handle_cli_forward(app, args);
+        }))
         .plugin(tauri_plugin_prevent_default::init())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
@@ -675,16 +950,19 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .setup(|app| {
+        .setup(move |app| {
             let app_handle = app.handle().clone();
 
             // 全局状态
             app.manage(Mutex::new(AppState::new(&app_handle)));
-            // 便签高度动画状态(见 resize_note_window);宽度从持久化条目恢复
+            // 便签高度动画状态(见 resize_note_window);宽度与用户高度从持久化条目恢复
             app.manage(Mutex::new(NoteResizeState {
                 width: read_note_width(&app_handle),
+                user_height: read_note_height(&app_handle),
                 ..Default::default()
             }));
+            // 外部操作队列(CLI 写命令的转发/冷启动入队,前端 take_external_ops 取走)
+            app.manage(Mutex::new(Vec::<cli::ExternalOp>::new()));
 
             // 托盘菜单
             let toggle_item = MenuItem::with_id(app, "toggle", "暂停", true, None::<&str>)?;
@@ -814,6 +1092,13 @@ pub fn run() {
                 }
             }
 
+            // 冷启动 CLI 写命令:应用本来没在运行时用户直接跑 CLI,本实例即常驻实例,
+            // 把启动参数里的操作入队。此刻便签 webview 尚未挂载,keyboo-external-ops
+            // 事件大概率丢失——这正是前端挂载时主动 take_external_ops 兜底的原因
+            if let Some(op) = startup_cli_op {
+                enqueue_external_op(app.handle(), op);
+            }
+
             // 兜底:前端异常未能通知时,2s 后仍然显示(重复 show 无副作用)
             {
                 let app_handle = app.handle().clone();
@@ -917,8 +1202,12 @@ pub fn run() {
             save_note_position,
             resize_note_window,
             set_note_width,
-            get_note_width
+            get_note_width,
+            set_note_height,
+            get_note_height,
+            restore_note_height,
+            take_external_ops
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running Keyboo");
 }

@@ -15,8 +15,22 @@ import { NOTE_CONFIG_STORE_NAME, useNoteConfigStore } from "@/stores/useNoteConf
 import { useNoteStore, type TodoItem, type Topic } from "@/stores/useNoteStore";
 
 const MAX_TEXT = 42;
-/** 每页条数:列表区 max-height 320px,每行 36px+2px 间距,8 条=302px 恰好放下 */
-const PAGE_SIZE = 8;
+/** 行距 pitch:行高 36 + 列表 gap 2;容量换算与拖高键盘步进(±1 行)共用 */
+const ROW_PITCH = 38;
+/** 列表区上下 padding 合计(.todo-list 的 padding 8px 0),容量换算前扣除 */
+const LIST_PADDING_Y = 16;
+/** 便签窗口总高钳制(逻辑像素):高度语义 = 窗口总高,列表区用 flex 吃剩余空间;
+ *  与 Rust 侧 NOTE_HEIGHT_* 镜像,两边常量必须同步改 */
+const NOTE_HEIGHT_MIN = 280;
+const NOTE_HEIGHT_MAX = 860;
+/** 无持久值时的默认窗口总高(Rust 侧 get_note_height 同值兜底) */
+const NOTE_HEIGHT_DEFAULT = 320;
+/** 容量初值:仅为 ResizeObserver 首次回调前的首帧估算,观察器一挂上即被实测值覆盖 */
+const CAPACITY_BOOTSTRAP = 8;
+/** 条幅态窗口总高:头部 52 + 卡片上下边框 2(展开↔条幅切换由 Rust 动画) */
+const BANNER_HEIGHT = 54;
+/** 条幅态打开更多菜单时的扩窗高度:菜单弹层需要透明承载区,防原生窗口裁切 */
+const BANNER_MENU_HEIGHT = 156;
 /** 便签宽度钳制(逻辑像素):下限=原始设计宽,上限与 Rust 侧 NOTE_WIDTH_* 一致 */
 const NOTE_WIDTH_MIN = 292;
 const NOTE_WIDTH_MAX = 560;
@@ -127,6 +141,11 @@ interface DragSession {
 
 type NoteView = "active" | "done";
 
+/** Rust 外部操作队列的单条指令(AI/CLI 创建待办入口);字段名与 Rust 侧 serde camelCase 对齐 */
+type ExternalOp =
+  | { type: "addTodo"; text: string; project?: string | null }
+  | { type: "addProject"; title: string };
+
 /** 主列表行:平铺待办或主题(渲染层统一项,带类型标记) */
 type MainRow =
   | { kind: "todo"; item: TodoItem }
@@ -149,6 +168,7 @@ export function Note() {
 
   const cardRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const listWrapRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragSession | null>(null);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -165,6 +185,15 @@ export function Note() {
   const [pinned, setPinned] = useState(true);
   /** 便签宽度(逻辑像素):事实源在 Rust,启动拉取,拖右缘热区实时推送 */
   const [noteWidth, setNoteWidth] = useState(NOTE_WIDTH_DEFAULT);
+  /** 便签窗口总高(逻辑像素):事实源在 Rust,启动拉取;拖底缘热区实时推送。
+   *  卡片本身 height:100vh 逐帧跟随窗口,这里的 state 只做钳制基准与拖拽起点 */
+  const [noteHeight, setNoteHeight] = useState(NOTE_HEIGHT_DEFAULT);
+  /** 每页容量:由列表区实测高度派生(ResizeObserver),不再用固定常量 */
+  const [capacity, setCapacity] = useState(CAPACITY_BOOTSTRAP);
+  /** 拖高进行中:显示「每页 N 条」徽标,并让容量实时重算(跳过去抖) */
+  const [heightDragging, setHeightDragging] = useState(false);
+  /** 外部操作应用后的轻量提示文案(1.5s 自动消失) */
+  const [opToast, setOpToast] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [view, setView] = useState<NoteView>("active");
   const [page, setPage] = useState(1);
@@ -181,8 +210,15 @@ export function Note() {
   /** 拖宽会话:pointerId + 起始屏幕 x + 起始宽度;rAF 合并高频 pointermove */
   const widthDragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
   const widthRafRef = useRef(0);
-  /** 上次上报给 Rust 的高度:宽度变化也会触发 ResizeObserver,高度没变就不必再发 */
-  const lastHeightRef = useRef(0);
+  /** 拖高会话:pointerId + 起始屏幕 y + 起始窗口总高;rAF 合并高频 pointermove */
+  const heightDragRef = useRef<{ pointerId: number; startY: number; startHeight: number } | null>(null);
+  const heightRafRef = useRef(0);
+  /** 容量的同步镜像:ResizeObserver 回调里读 state 会拿到旧值,判重走 ref */
+  const capacityRef = useRef(CAPACITY_BOOTSTRAP);
+  /** 锚定迁移用:容量变化前的旧值 */
+  const prevCapacityRef = useRef(CAPACITY_BOOTSTRAP);
+  /** 外部操作提示的定时器句柄 */
+  const opToastTimerRef = useRef<number | null>(null);
 
   // 恢复钉住态(Rust 独占条目 keyboo-note-pinned,默认 true);
   // 同窗口生命周期内不再变化:钉住切换只发生在本窗口按钮上
@@ -192,6 +228,11 @@ export function Note() {
       .catch(() => {});
     invoke<number>("get_note_width")
       .then((value) => setNoteWidth(value))
+      .catch(() => {});
+    // 用户高度:条幅↔展开切换时 Rust 侧自行掌握基准,这里拉一份
+    // 作为拖高/键盘微调的钳制起点
+    invoke<number>("get_note_height")
+      .then((value) => setNoteHeight(value))
       .catch(() => {});
   }, []);
 
@@ -258,32 +299,103 @@ export function Note() {
     };
   }, [moreOpen]);
 
-  // 窗口高度随内容自适应:条幅打开更多菜单时额外让出透明承载区,避免原生窗口裁切弹层。
+  // ── 窗口高度模式切换(高度语义 = 窗口总高,因果已反转) ──
+  // 展开态高度由用户设定(拖底缘热区/键盘微调走 set_note_height),本 effect 不插手;
+  // 只有条幅态仍走 resize_note_window:条幅 = 头部高度,条幅开菜单 = 扩窗防裁切弹层。
+  // 从条幅/菜单状态回到展开态时调 restore_note_height,由 Rust 动画恢复到用户高度。
+  // 首次挂载(prev=null)也会对展开态发一次 restore:Rust 侧幂等,当前已是用户高度则无动作。
+  const prevWindowModeRef = useRef<"expanded" | "banner" | "banner-menu" | null>(null);
   useEffect(() => {
-    const card = cardRef.current;
-    if (!card) return;
-    // 本 effect 随 collapsed/moreOpen 重建:清零去重基准,保证重建后必发一次高度请求
-    // (条幅态卡片高度恒 52,靠 forceHeight 分支扩窗,纯高度去重会误吞)
-    lastHeightRef.current = 0;
-    let timer: number | null = null;
+    const mode: "expanded" | "banner" | "banner-menu" = collapsed
+      ? moreOpen
+        ? "banner-menu"
+        : "banner"
+      : "expanded";
+    const prev = prevWindowModeRef.current;
+    prevWindowModeRef.current = mode;
+    if (prev === mode) return;
+    if (mode === "expanded") {
+      invoke("restore_note_height").catch(() => {});
+    } else {
+      invoke("resize_note_window", {
+        height: mode === "banner-menu" ? BANNER_MENU_HEIGHT : BANNER_HEIGHT,
+        animate: !reducedMotion,
+      }).catch(() => {});
+    }
+  }, [collapsed, moreOpen, reducedMotion]);
+
+  // ── 容量派生:ResizeObserver 量列表区实测高度 → 每页条数 ──
+  // 因果反转:窗口总高是用户设的,列表区高度由 flex 布局决定,观察者只负责量出
+  // 列表区多高,按 pitch=38 换算容量(替代原固定每页 8 条)。
+  // 拖高期间实时重算(跨行边界立即改页);非拖动来源的高度变化(条幅↔展开动画
+  // 中途的中间高度)做 120ms 去抖只落最终值,避免动画期间页码反复跳动。
+  // 条幅态直接断开观察:列表区高度为 0,冻结容量防页码塌缩。
+  useEffect(() => {
+    if (collapsed) return;
+    const wrap = listWrapRef.current;
+    if (!wrap) return;
+    let settleTimer: number | null = null;
     const observer = new ResizeObserver((entries) => {
       const height =
-        entries[0]?.borderBoxSize?.[0]?.blockSize ?? card.getBoundingClientRect().height;
-      // 高度没变(纯宽度变化,如拖宽)不必再发窗口高度请求
-      if (Math.abs(height - lastHeightRef.current) < 0.5) return;
-      if (timer) clearTimeout(timer);
-      timer = window.setTimeout(() => {
-        const targetHeight = collapsed && moreOpen ? Math.max(height, 156) : height;
-        lastHeightRef.current = height;
-        invoke("resize_note_window", { height: targetHeight, animate: !reducedMotion }).catch(() => {});
-      }, 100);
+        entries[0]?.borderBoxSize?.[0]?.blockSize ?? wrap.getBoundingClientRect().height;
+      const next = Math.max(1, Math.floor((height - LIST_PADDING_Y) / ROW_PITCH));
+      if (next === capacityRef.current) return;
+      if (heightDragRef.current) {
+        // 拖高中:跟手立即重算
+        capacityRef.current = next;
+        setCapacity(next);
+        return;
+      }
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = window.setTimeout(() => {
+        if (next === capacityRef.current) return;
+        capacityRef.current = next;
+        setCapacity(next);
+      }, 120);
     });
-    observer.observe(card);
+    observer.observe(wrap);
     return () => {
       observer.disconnect();
-      if (timer) clearTimeout(timer);
+      if (settleTimer) clearTimeout(settleTimer);
     };
-  }, [collapsed, moreOpen, reducedMotion]);
+  }, [collapsed]);
+
+  // 容量变化时锚定当前页首行:按旧容量算出首行的全局索引 anchor,
+  // 新页码 = floor(anchor / 新容量)+1——眼睛盯着的条目留在原位,不因换页跳走
+  // (pageSafe 的越界钳制仍在下游兜底)
+  useEffect(() => {
+    const prev = prevCapacityRef.current;
+    if (prev === capacity) return;
+    prevCapacityRef.current = capacity;
+    const anchor = Math.min(Math.max(0, (page - 1) * prev), Math.max(0, viewRows.length - 1));
+    setPage(Math.floor(anchor / capacity) + 1);
+    // page/viewRows 读的是容量变化当帧的值,刻意不进 deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capacity]);
+
+  // 外部操作消费(AI 创建待办入口):挂载先 take 一次兜底冷启动
+  // (窗口拉起前积压的通知事件已丢失),再监听通知,收到即再取队列。
+  // 事件无 payload,纯「有货了」信号,数据一律以 take_external_ops 拉取为准。
+  useEffect(() => {
+    const take = () => {
+      invoke<ExternalOp[]>("take_external_ops")
+        .then((ops) => {
+          if (ops?.length) applyExternalOps(ops);
+        })
+        .catch(() => {});
+    };
+    take();
+    const unlisten = listen("keyboo-external-ops", take);
+    return () => {
+      void unlisten.then((un) => un());
+      if (opToastTimerRef.current) {
+        clearTimeout(opToastTimerRef.current);
+        opToastTimerRef.current = null;
+      }
+    };
+    // applyExternalOps 只依赖稳定的 store actions
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 拖动落盘:窗口移动事件防抖保存(Rust 侧钳制到虚拟屏内,幂等)
   useEffect(() => {
@@ -366,6 +478,112 @@ export function Note() {
     invoke("set_note_width", { width: next, save: true }).catch(() => {});
   };
 
+  // ── 拖高便签:卡片底缘通条热区,顶部锚定向下生长 ──
+  // 与拖宽同一套手法:屏幕坐标算增量断反馈回路,rAF 合并高频 pointermove,
+  // 拖动中 save=false 只推内存实时跟手,松手 save=true 落盘(重启恢复)。
+  // 容量随拖动实时重算,手柄上方常驻「每页 N 条」徽标
+  const onHeightHandlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    heightDragRef.current = {
+      pointerId: event.pointerId,
+      startY: event.screenY,
+      startHeight: noteHeight,
+    };
+    setHeightDragging(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const onHeightHandlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = heightDragRef.current;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    // 窗口上缘锚定不动:screenY 增量 = 高度增量,与 clientY 无反馈回路
+    const next = Math.round(
+      Math.max(
+        NOTE_HEIGHT_MIN,
+        Math.min(NOTE_HEIGHT_MAX, drag.startHeight + event.screenY - drag.startY),
+      ),
+    );
+    if (next === noteHeight) return;
+    setNoteHeight(next);
+    cancelAnimationFrame(heightRafRef.current);
+    heightRafRef.current = requestAnimationFrame(() => {
+      invoke("set_note_height", { height: next, save: false }).catch(() => {});
+    });
+  };
+
+  const onHeightHandlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = heightDragRef.current;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    heightDragRef.current = null;
+    setHeightDragging(false);
+    cancelAnimationFrame(heightRafRef.current);
+    invoke("set_note_height", { height: noteHeight, save: true }).catch(() => {});
+  };
+
+  // 键盘可达:↑ 增高一行,↓ 缩一行(行语义步进,与宽度的 16px 像素步进刻意不同)
+  const onHeightHandleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = event.key === "ArrowUp" ? ROW_PITCH : event.key === "ArrowDown" ? -ROW_PITCH : 0;
+    if (!step) return;
+    event.preventDefault();
+    const next = Math.max(NOTE_HEIGHT_MIN, Math.min(NOTE_HEIGHT_MAX, noteHeight + step));
+    if (next === noteHeight) return;
+    setNoteHeight(next);
+    invoke("set_note_height", { height: next, save: true }).catch(() => {});
+  };
+
+  // ── 外部操作应用:Rust 队列里的指令逐条依序落库 ──
+  // project 匹配按标题大小写不敏感,只认进行中主题(已完结主题不复活);
+  // 未命中先建项目再挂待办。文本 trim + 空值静默防御(Rust 已限 42 字)。
+  // 多条 op 用 useNoteStore.getState() 取最新状态,避免闭包旧值串档
+  const showOpToast = (message: string) => {
+    setOpToast(message);
+    if (opToastTimerRef.current) clearTimeout(opToastTimerRef.current);
+    opToastTimerRef.current = window.setTimeout(() => {
+      setOpToast(null);
+      opToastTimerRef.current = null;
+    }, 1500);
+  };
+
+  const applyExternalOps = (ops: ExternalOp[]) => {
+    let todoCount = 0;
+    let projectCount = 0;
+    let lastLabel = "";
+    for (const op of ops) {
+      if (op.type === "addProject") {
+        const title = op.title?.trim();
+        if (!title) continue;
+        addTopic(title);
+        projectCount++;
+        lastLabel = title;
+        continue;
+      }
+      const text = op.text?.trim();
+      if (!text) continue;
+      const projectName = op.project?.trim();
+      if (projectName) {
+        const key = projectName.toLowerCase();
+        const topic = useNoteStore
+          .getState()
+          .topics.find((t) => !t.doneAt && t.title.toLowerCase() === key);
+        const topicId = topic ? topic.id : addTopic(projectName);
+        addTodo(text, topicId);
+      } else {
+        addTodo(text);
+      }
+      todoCount++;
+      lastLabel = text;
+    }
+    const total = todoCount + projectCount;
+    if (!total) return;
+    if (total > 1) {
+      showOpToast(`已添加 ${total} 条`);
+    } else if (projectCount) {
+      showOpToast(`已添加项目：${lastLabel}`);
+    } else {
+      showOpToast(`已添加：${lastLabel}`);
+    }
+  };
+
   // ── 视图与分页 ──
 
   // 主列表:平铺进行中待办(数组序)+ 进行中主题(建好的空主题也显示,可拆解)
@@ -397,11 +615,12 @@ export function Note() {
   ].sort((a, b) => (b.item.doneAt ?? 0) - (a.item.doneAt ?? 0));
 
   const viewRows = view === "active" ? (topicId ? currentChildren.map((item): MainRow => ({ kind: "todo", item })) : mainRows) : archiveRows;
-  const pageCount = Math.max(1, Math.ceil(viewRows.length / PAGE_SIZE));
+  // 容量 = 列表区实测高度派生(ResizeObserver 链路),分页/跳页/拖动换算统一用这一份
+  const pageCount = Math.max(1, Math.ceil(viewRows.length / capacity));
   // 删除/取消完成后页码可能越界,派生安全页码兜底
   const pageSafe = Math.min(page, pageCount);
-  const pageRows = viewRows.slice((pageSafe - 1) * PAGE_SIZE, pageSafe * PAGE_SIZE);
-  const pageOffset = (pageSafe - 1) * PAGE_SIZE;
+  const pageRows = viewRows.slice((pageSafe - 1) * capacity, pageSafe * capacity);
+  const pageOffset = (pageSafe - 1) * capacity;
 
   // 主题完成瞬间(最后一个子待办勾掉)自动退出子视图回主列表:
   // 主题行离开进行中列表,回主列表能看到收纳飞行动画的落点语境
@@ -435,8 +654,8 @@ export function Note() {
     }
     addTodo(draft);
     setDraft("");
-    // 新事项落在进行中列表末尾:跳到它所在页
-    goList(Math.ceil((activeTodos.length + 1) / PAGE_SIZE), "active", null, 1);
+    // 新事项落在进行中列表末尾:跳到它所在页(容量动态,按当前值换算)
+    goList(Math.ceil((activeTodos.length + 1) / capacity), "active", null, 1);
   };
 
   const submitProject = (event: React.FormEvent) => {
@@ -994,7 +1213,7 @@ export function Note() {
       <div className="note-body" aria-hidden={collapsed} inert={collapsed ? true : undefined}>
         <div className="note-body-inner">
           <div className="note-content">
-            <div className="todo-list-wrap">
+            <div className="todo-list-wrap" ref={listWrapRef}>
               {leaving && (
                 <ul
                   className={
@@ -1133,6 +1352,36 @@ export function Note() {
         onPointerCancel={onResizeHandlePointerUp}
         onKeyDown={onResizeHandleKeyDown}
       />
+
+      {/* 拖高热区:卡片底缘通条(顶部锚定,向下生长),条幅态不渲染;
+          拖动期间手柄上方常驻容量徽标,松手即隐 */}
+      {!collapsed && (
+        <div
+          className="note-height-handle"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="拖动调整便签高度(上下方向键按行微调)"
+          title="拖动调整高度"
+          tabIndex={0}
+          onPointerDown={onHeightHandlePointerDown}
+          onPointerMove={onHeightHandlePointerMove}
+          onPointerUp={onHeightHandlePointerUp}
+          onPointerCancel={onHeightHandlePointerUp}
+          onKeyDown={onHeightHandleKeyDown}
+        />
+      )}
+      {heightDragging && (
+        <div className="note-height-badge" aria-hidden="true">
+          每页 {capacity} 条
+        </div>
+      )}
+
+      {/* 外部操作反馈:卡片内浮层(窗口无边框,通用 toast 会被窗口边界裁切),1.5s 自隐 */}
+      {opToast && (
+        <div className="note-op-toast" role="status">
+          {opToast}
+        </div>
+      )}
 
       {moreOpen && (
         <div
