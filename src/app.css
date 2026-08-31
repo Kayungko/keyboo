@@ -667,6 +667,27 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 主列表标题可点击自定义:光标提示可编辑,但不再作为拖窗把手(startDrag 已排除) */
+.note-title.is-editable {
+  cursor: text;
+}
+/* 标题编辑态:视觉对齐 h3,仅以底线区分 */
+.note-title-edit {
+  min-width: 0;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--note-accent);
+  outline: 0;
+  background: transparent;
+  color: var(--note-text);
+  font-size: 1rem;
+  line-height: 1.22;
+  font-weight: 720;
+  letter-spacing: -0.015em;
+  font-family: inherit;
+}
 .note-pin-state {
   width: 5px;
   height: 5px;

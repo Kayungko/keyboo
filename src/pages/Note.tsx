@@ -164,6 +164,8 @@ export function Note() {
   const removeTopic = useNoteStore((s) => s.removeTopic);
   const collapsed = useNoteStore((s) => s.collapsed);
   const setCollapsed = useNoteStore((s) => s.setCollapsed);
+  const listTitle = useNoteStore((s) => s.listTitle);
+  const setListTitle = useNoteStore((s) => s.setListTitle);
   const accentColor = useNoteConfigStore((s) => s.accentColor);
 
   const cardRef = useRef<HTMLDivElement>(null);
@@ -195,6 +197,14 @@ export function Note() {
   /** 外部操作应用后的轻量提示文案(1.5s 自动消失) */
   const [opToast, setOpToast] = useState<string | null>(null);
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  /** 行内编辑输入框(待办/标题共用 editing 状态,同一时刻最多渲染一个) */
+  const editInputRef = useRef<HTMLInputElement>(null);
+  // 光标定位只在进入编辑时执行一次。不能用 inline ref:每次重渲染都会重新调用,
+  // 每敲一个字就 setSelectionRange 到末尾,光标在开头/中间打字会被强制推到最后
+  useEffect(() => {
+    const el = editInputRef.current;
+    if (el) el.setSelectionRange(el.value.length, el.value.length);
+  }, [editing?.id]);
   const [view, setView] = useState<NoteView>("active");
   const [page, setPage] = useState(1);
   /** 进入中的主题 id;null = 主列表 */
@@ -419,10 +429,10 @@ export function Note() {
     return () => clearTimeout(timer);
   }, [leaving]);
 
-  // 按住头部拖动(排除按钮目标);Windows 上模态移动循环结束后返回,
+  // 按住头部拖动(排除按钮/可编辑标题);Windows 上模态移动循环结束后返回,
   // 落盘由 onMoved 防抖兜底,这里不重复保存
   const startDrag = (event: React.PointerEvent<HTMLElement>) => {
-    if ((event.target as HTMLElement).closest("button")) return;
+    if ((event.target as HTMLElement).closest("button, .is-editable, input")) return;
     void getCurrentWindow().startDragging().catch(() => {});
   };
 
@@ -831,8 +841,11 @@ export function Note() {
 
   const commitEdit = () => {
     if (!editing) return;
-    // 主题名与待办文本共用 editing 状态;id 前缀区分落盘目标
-    if (editing.id.startsWith("topic:")) {
+    // 主题名/待办文本/主列表标题共用 editing 状态;id 前缀区分落盘目标
+    if (editing.id === "header:") {
+      // trim 后为空 = 清空自定义,回退默认「今日待办」
+      setListTitle(editing.text);
+    } else if (editing.id.startsWith("topic:")) {
       updateTopic(editing.id.slice(6), editing.text);
     } else {
       updateTodo(editing.id, editing.text);
@@ -1086,9 +1099,7 @@ export function Note() {
               autoComplete="off"
               aria-label="编辑待办"
               autoFocus
-              ref={(el) => {
-                if (el) el.setSelectionRange(el.value.length, el.value.length);
-              }}
+              ref={editInputRef}
               onChange={(event) => setEditing({ id: todo.id, text: event.target.value })}
               onKeyDown={onEditKeyDown}
               onBlur={commitEdit}
@@ -1124,7 +1135,13 @@ export function Note() {
 
   const listKey = `${view}-${topicId ?? "main"}-${pageSafe}`;
   const isArchiveList = view === "done";
-  const headerTitle = topicId ? currentTopic?.title ?? "" : view === "active" ? "今日待办" : "已完成";
+  const headerTitle = topicId
+    ? currentTopic?.title ?? ""
+    : view === "active"
+      ? listTitle || "今日待办"
+      : "已完成";
+  // 主列表标题可自定义:点标题进入编辑(主题页/已完成页标题是固定语义,不可改)
+  const titleEditable = !topicId && view === "active" && !collapsed;
   const headerProgress = topicId
     ? `${currentChildren.filter((c) => c.done).length} / ${currentChildren.length}`
     : `${doneCount} / ${todos.length}`;
@@ -1163,7 +1180,30 @@ export function Note() {
             </button>
           )}
           <div className="note-title-line note-swap" key={`${view}-${topicId ?? "main"}`}>
-            <h3 className="note-title">{headerTitle}</h3>
+            {editing?.id === "header:" ? (
+              <input
+                className="note-title-edit"
+                type="text"
+                value={editing.text}
+                maxLength={MAX_TEXT}
+                autoComplete="off"
+                aria-label="编辑列表标题"
+                autoFocus
+                ref={editInputRef}
+                onChange={(event) => setEditing({ id: "header:", text: event.target.value })}
+                onKeyDown={onEditKeyDown}
+                onBlur={commitEdit}
+                onPointerDown={(event) => event.stopPropagation()}
+              />
+            ) : (
+              <h3
+                className={titleEditable ? "note-title is-editable" : "note-title"}
+                title={titleEditable ? "点击自定义标题" : undefined}
+                onClick={titleEditable ? () => setEditing({ id: "header:", text: listTitle }) : undefined}
+              >
+                {headerTitle}
+              </h3>
+            )}
             <span className="note-pin-state" aria-label={pinned ? "保持在最前" : undefined} />
           </div>
         </div>

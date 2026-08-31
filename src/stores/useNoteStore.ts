@@ -36,6 +36,8 @@ interface NoteState {
   topics: Topic[];
   /** 窗口可见形态:展开(false) / 条幅(true);隐藏到托盘不改变本值 */
   collapsed: boolean;
+  /** 主列表自定义标题;空串 = 回退默认「今日待办」 */
+  listTitle: string;
 }
 
 interface NoteActions {
@@ -54,6 +56,8 @@ interface NoteActions {
   /** 拖动排序主题(仅主列表的平铺待办+主题行序列内有效) */
   reorderTopic: (id: string, toIndex: number) => void;
   setCollapsed: (collapsed: boolean) => void;
+  /** 自定义主列表标题:trim 后为空则清空(回退默认「今日待办」) */
+  setListTitle: (title: string) => void;
 }
 
 export type NoteStore = NoteState & NoteActions;
@@ -70,6 +74,7 @@ export const useNoteStore = create<NoteStore>()(
       todos: [],
       topics: [],
       collapsed: false,
+      listTitle: "",
 
       addTodo: (text, topicId) => {
         const trimmed = text.trim();
@@ -201,18 +206,27 @@ export const useNoteStore = create<NoteStore>()(
       },
 
       setCollapsed: (collapsed) => set({ collapsed }),
+
+      setListTitle: (title) => set({ listTitle: title.trim() }),
     }),
     {
       name: NOTE_STORE_NAME,
       storage: noteStorage,
-      version: 3,
+      version: 4,
       // v1/v2 → v3:保留旧 todos/topics,补窗口条幅状态
+      // v3 → v4:补主列表自定义标题(缺省空串 = 默认「今日待办」)
       migrate: (persisted) => {
-        const state = persisted as { todos?: TodoItem[]; topics?: Topic[]; collapsed?: boolean };
+        const state = persisted as {
+          todos?: TodoItem[];
+          topics?: Topic[];
+          collapsed?: boolean;
+          listTitle?: string;
+        };
         return {
           todos: state.todos ?? [],
           topics: state.topics ?? [],
           collapsed: state.collapsed ?? false,
+          listTitle: state.listTitle ?? "",
         };
       },
     },
