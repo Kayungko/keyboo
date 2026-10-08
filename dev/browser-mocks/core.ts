@@ -8,6 +8,14 @@ export async function invoke<T = unknown>(cmd: string, args?: Record<string, unk
   return undefined as T;
 }
 
-export async function convertFileSrc(url: string): Promise<string> {
+export function convertFileSrc(url: string): string {
   return url;
+}
+
+export class Resource {
+  constructor(public rid: number) {}
+  async close() {}
+}
+export class Channel<T = unknown> {
+  onmessage: (message: T) => void = () => {};
 }

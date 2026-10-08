@@ -5,7 +5,9 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Slider } from "@/components/ui/slider";
 import { HappyIcon, Refresh01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
+import { companionImageUrl } from "@/lib/companion/image";
+import { DANGO_FRAMES } from "@/lib/companion/dango";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useEffect, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -65,15 +67,15 @@ export const CompanionSettings = () => {
 
   // ─── 自定义形象:导入 / 移除 ───
   const importCustomSkin = async () => {
-    const path = await open({
-      multiple: false,
-      title: "选择伙伴形象图片",
-      filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif", "svg"] }],
-    });
-    if (!path || typeof path !== "string") return;
     try {
+      const path = await open({
+        multiple: false,
+        title: "选择伙伴形象图片",
+        filters: [{ name: "图片", extensions: ["png", "jpg", "jpeg", "webp", "gif", "svg"] }],
+      });
+      if (!path || typeof path !== "string") return;
       const dest = await invoke<string>("import_companion_image", { path });
-      setConfig({ customSkinFile: dest, skin: "custom" });
+      setConfig({ customSkinFile: dest, customSkinRevision: Date.now(), skin: "custom" });
       toast.success("自定义形象已导入");
     } catch (err) {
       toast.error(String(err));
@@ -163,6 +165,9 @@ export const CompanionSettings = () => {
             >
               <img src={daotongUrl} alt="道童" className="max-h-full max-w-full object-contain" draggable={false} />
             </SkinCard>
+            <SkinCard selected={config.skin === "dango"} label="黑发团子 · 表情" onClick={() => selectSkin("dango")}>
+              <img src={DANGO_FRAMES.normal} alt="黑发团子" className="max-h-full max-w-full object-contain" draggable={false} />
+            </SkinCard>
             {config.customSkinFile ? (
               <SkinCard
                 selected={config.skin === "custom"}
@@ -171,7 +176,7 @@ export const CompanionSettings = () => {
                 onDelete={removeCustomSkin}
               >
                 <img
-                  src={convertFileSrc(config.customSkinFile)}
+                  src={companionImageUrl(config.customSkinFile, config.customSkinRevision)}
                   alt="自定义形象"
                   className="max-h-full max-w-full object-contain"
                   draggable={false}
@@ -192,6 +197,9 @@ export const CompanionSettings = () => {
             <ItemDescription className="mt-2">
               自定义形象支持 Q 弹拉拽与全身小动作,沿用当前角色的成长体系;局部五官动画仅分层 SVG 角色有
             </ItemDescription>
+          )}
+          {config.skin === "dango" && (
+            <ItemDescription className="mt-2">左键轻拉会惊讶，重拉会闭眼抗议，松手回弹后短暂委屈；右键拖动位置。沿用当前角色的成长进度。</ItemDescription>
           )}
         </Item>
 

@@ -63,6 +63,7 @@ export interface SkinProps {
   visible: boolean;
   /** 自定义形象纹理源(asset protocol URL);缺省渲染内置角色 */
   asset?: string;
+  preloadAssets?: string[];
   /**
    * 物理场回弹至真实静止(逐顶点位移/速度均过判据)且无拉拽时触发一次。
    * 渲染器内部防抖:挂载首帧(atRest)与拖拽目标稳定期(pull 非 null)不触发。

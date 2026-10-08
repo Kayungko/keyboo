@@ -170,6 +170,7 @@ export const presetProfileOf = (id: CharacterId): CompanionProfile => ({
 
 /** 皮肤 → 所属角色;custom 只换渲染不切换角色(沿用当前角色的成长体系) */
 export const SKIN_CHARACTER: Record<SkinId, CharacterId | null> = {
+  dango: null,
   blob: "jianbo",
   blob3d: "jianbo",
   daotong: "daotong",

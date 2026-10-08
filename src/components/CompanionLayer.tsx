@@ -19,7 +19,8 @@
 // (汤圆:张望/耳抖;柯基:张望/耳抖/摇尾)。眨眼独立随机触发。
 
 import { cn } from "@/lib/utils";
-import { convertFileSrc } from "@tauri-apps/api/core";
+import { companionImageUrl } from "@/lib/companion/image";
+import { DANGO_FRAMES, pullExpression, type DangoExpression } from "@/lib/companion/dango";
 import { CHARACTERS } from "@/lib/companion/presets";
 import { type PullInfo, type SkinProps } from "@/lib/softbody/core";
 import { AnimatePresence, motion, useAnimationControls, useReducedMotion } from "motion/react";
@@ -42,6 +43,7 @@ import { SoftBody3D } from "./SoftBody3D";
 // 物理核心(SoftBodyField)与交互协议(SkinProps),后期加新皮肤在此注册即可。
 // daotong = 道童(内置 SVG,走 2D 网格 Warp);custom = 自定义图片,同走 2D 网格 Warp
 const SKINS: Record<SkinId, ComponentType<SkinProps>> = {
+  dango: SoftBody,
   blob: SoftBody,
   blob3d: SoftBody3D,
   daotong: SoftBody,
@@ -123,6 +125,18 @@ export function CompanionLayer() {
   const [localPos, setLocalPos] = useState<[number, number] | null>(null);
   const [pull, setPull] = useState<PullInfo | null>(null);
   const [warping, setWarping] = useState(false);
+  const [expression, setExpression] = useState<DangoExpression>("normal");
+  const expressionRef = useRef<DangoExpression>("normal");
+  const expressionTimerRef = useRef<number | null>(null);
+  const changeExpression = (next: DangoExpression) => {
+    expressionRef.current = next;
+    setExpression(next);
+  };
+  const resetExpression = () => {
+    if (expressionTimerRef.current) window.clearTimeout(expressionTimerRef.current);
+    expressionTimerRef.current = null;
+    changeExpression("normal");
+  };
   const [idleAnim, setIdleAnim] = useState<IdleAnim | null>(null);
   const [blinking, setBlinking] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -168,7 +182,16 @@ export function CompanionLayer() {
   const handleSettled = () => {
     if (!warpingRef.current || pullMirrorRef.current) return;
     completeSettle();
+    if (expressionRef.current === "release") {
+      if (expressionTimerRef.current) window.clearTimeout(expressionTimerRef.current);
+      expressionTimerRef.current = window.setTimeout(resetExpression, 550);
+    }
   };
+
+  useEffect(() => {
+    resetExpression();
+    return () => { if (expressionTimerRef.current) window.clearTimeout(expressionTimerRef.current); };
+  }, [config.skin]);
 
   const pos = dragging && localPos ? localPos : config.pos;
 
@@ -199,6 +222,7 @@ export function CompanionLayer() {
       if (x < r.left || x > r.right || y < r.top || y > r.bottom) return;
       const physics = useCompanionStore.getState().config.physics;
       const mode: DragMode = button === "Right" || !physics ? "move" : "pull";
+      resetExpression();
       const localX = r.width > 0 ? (x - r.left) / r.width : 0.5;
       const localY = r.height > 0 ? (y - r.top) / r.height : 0.5;
       dragRef.current = {
@@ -225,6 +249,12 @@ export function CompanionLayer() {
           if (p) useCompanionStore.getState().setConfig({ pos: p });
         }
       } else {
+        if (drag.moved && useCompanionStore.getState().config.skin === "dango") {
+          changeExpression("release");
+          const p = useCompanionStore.getState().config.physicsParams;
+          expressionTimerRef.current = window.setTimeout(resetExpression,
+            settleFallbackMs(p.stiffness, p.damping, p.maxStretch) + 550);
+        }
         // 软体拉拽松手:回弹,物理场真正静止(onSettled)后切回静态帧;
         // 特征根兜底定时器只在回调丢失(换肤重建物理场等)时生效
         updatePull(null);
@@ -281,11 +311,16 @@ export function CompanionLayer() {
           clamp(drag.originTop + dy, 0, window.innerHeight - (el?.offsetHeight ?? 0)),
         ]);
       } else {
+        const cfg = useCompanionStore.getState().config;
+        if (cfg.skin === "dango") {
+          changeExpression(pullExpression(Math.hypot(dx, dy) / cfg.size, expressionRef.current));
+        }
         updatePull({ localX: drag.localX, localY: drag.localY, offsetX: dx, offsetY: dy });
       }
     });
 
     const onBlur = () => {
+      resetExpression();
       dragRef.current = null;
       setDragging(false);
       setPos(null);
@@ -443,8 +478,9 @@ export function CompanionLayer() {
   const Skin = SKINS[effectiveSkin] ?? SoftBody;
   // 形象纹理源:自定义图片(asset protocol)/ 道童(打包 SVG);汤圆无纹理源(BlobSvg/BODY_SVG 渲染)
   const skinUrl =
-    effectiveSkin === "custom" && config.customSkinFile
-      ? convertFileSrc(config.customSkinFile)
+    effectiveSkin === "dango" ? DANGO_FRAMES[expression]
+    : effectiveSkin === "custom" && config.customSkinFile
+      ? companionImageUrl(config.customSkinFile, config.customSkinRevision)
       : effectiveSkin === "daotong"
         ? daotongUrl
         : effectiveSkin === "corgi"
@@ -588,6 +624,7 @@ export function CompanionLayer() {
             params={config.physicsParams}
             visible={warping}
             asset={skinUrl ?? undefined}
+            preloadAssets={effectiveSkin === "dango" ? Object.values(DANGO_FRAMES) : undefined}
             onSettled={handleSettled}
             onTextureReady={(ok) => {
               texOkRef.current = ok;

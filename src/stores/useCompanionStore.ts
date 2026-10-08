@@ -36,7 +36,7 @@ export type { CharacterId } from "@/lib/companion/presets";
 export const COMPANION_STORE_NAME = "keyboo-companion-store";
 
 /** 皮肤 id:2D 经典 / 3D 原型 / 道童 / 柯基实验 / 自定义图片 */
-export type SkinId = "blob" | "blob3d" | "daotong" | "corgi" | "custom";
+export type SkinId = "blob" | "blob3d" | "daotong" | "corgi" | "custom" | "dango";
 
 const CONFIG_KEY = "companion-config";
 const STATS_KEY = "companion-stats";
@@ -100,6 +100,7 @@ export interface CompanionConfig {
   profiles: Partial<Record<CharacterId, CompanionProfile>>;
   /** 自定义形象图片完整路径($APPDATA/companions/ 内);null = 未导入 */
   customSkinFile: string | null;
+  customSkinRevision: number;
 }
 
 export interface CompanionStats {
@@ -168,6 +169,7 @@ const defaultConfig = (): CompanionConfig => ({
   character: "jianbo",
   profiles: {},
   customSkinFile: null,
+  customSkinRevision: 0,
 });
 const defaultStats = (): CompanionStats => ({
   totalKeys: 0,
@@ -311,7 +313,8 @@ export async function loadCompanionPersist() {
       ...restConfig,
       // 旧存档兼容:skin 非法值回退(custom 仅在已导入图片时有效);physicsParams 深合并(新参数取默认)
       skin:
-        restConfig.skin === "blob3d" ? "blob3d"
+        restConfig.skin === "dango" ? "dango"
+        : restConfig.skin === "blob3d" ? "blob3d"
         : restConfig.skin === "daotong" ? "daotong"
         : restConfig.skin === "corgi" ? "corgi"
         : restConfig.skin === "custom" && restConfig.customSkinFile ? "custom"

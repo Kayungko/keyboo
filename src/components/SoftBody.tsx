@@ -26,7 +26,7 @@ const getSkinCanvas = (asset?: string) => {
   return p;
 };
 
-export function SoftBody({ size, pull, params, visible, asset, onSettled, onTextureReady }: SkinProps) {
+export function SoftBody({ size, pull, params, visible, asset, preloadAssets, onSettled, onTextureReady }: SkinProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const pullRef = useRef(pull);
   const paramsRef = useRef(params);
@@ -35,6 +35,10 @@ export function SoftBody({ size, pull, params, visible, asset, onSettled, onText
   const onSettledRef = useRef(onSettled);
   const onTextureReadyRef = useRef(onTextureReady);
   const wakeRef = useRef<() => void>(() => {});
+  const swapAssetRef = useRef<(source?: string) => void>(() => {});
+  useEffect(() => {
+    for (const source of preloadAssets ?? []) void getSkinCanvas(source).catch(() => {});
+  }, [preloadAssets]);
 
   useEffect(() => {
     pullRef.current = pull;
@@ -97,21 +101,27 @@ export function SoftBody({ size, pull, params, visible, asset, onSettled, onText
     // 纹理就绪上报:effect 重跑(换肤)先复位,加载成功/失败如实上报——
     // 失败时 CompanionLayer 拒绝进入 warping,DOM 静态帧保持可见
     onTextureReadyRef.current?.(false);
-    void getSkinCanvas(asset)
+    let assetRequest = 0;
+    swapAssetRef.current = (source) => {
+      const request = ++assetRequest;
+      void getSkinCanvas(source)
       .then((c) => {
-        if (disposed) return;
+        if (disposed || request !== assetRequest) return;
         const tex = new THREE.CanvasTexture(c);
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+        const previous = mat.map;
         mat.map = tex;
+        previous?.dispose();
         mat.needsUpdate = true;
         texReady = true;
         onTextureReadyRef.current?.(true);
         wakeRef.current();
       })
       .catch(() => {
-        onTextureReadyRef.current?.(false);
+        if (!disposed && request === assetRequest && !texReady) onTextureReadyRef.current?.(false);
       });
+    };
 
     // ─── 物理场:33×33 网格,静止坐标 = 纹理归一化坐标 ───
     const stride = GRID + 1;
@@ -212,6 +222,7 @@ export function SoftBody({ size, pull, params, visible, asset, onSettled, onText
 
     return () => {
       disposed = true;
+      swapAssetRef.current = () => {};
       wakeRef.current = () => {};
       cancelAnimationFrame(raf);
       geo.dispose();
@@ -220,6 +231,11 @@ export function SoftBody({ size, pull, params, visible, asset, onSettled, onText
       renderer.dispose();
       if (canvas.parentNode === container) container.removeChild(canvas);
     };
+  }, []);
+
+  // 换表情只更新纹理，保留网格、弹簧位移及速度，松手不会突然复位。
+  useEffect(() => {
+    swapAssetRef.current(asset);
   }, [asset]);
 
   return (

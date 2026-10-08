@@ -773,7 +773,7 @@ fn companions_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> 
     Ok(dir)
 }
 
-/// 导入自定义伙伴图片:校验格式/大小后复制到 $APPDATA/companions/custom.<ext>,
+/// 导入自定义伙伴图片:校验格式/大小后复制到独立的 custom.<版本>.<ext>,
 /// 覆盖旧形象(同一时刻只保留一张自定义图),返回完整路径供前端 convertFileSrc 使用
 #[tauri::command]
 fn import_companion_image(app: tauri::AppHandle, path: String) -> Result<String, String> {
@@ -794,16 +794,21 @@ fn import_companion_image(app: tauri::AppHandle, path: String) -> Result<String,
         return Err("图片过大(上限 8MB)".to_string());
     }
     let dir = companions_dir(&app)?;
-    // 清理旧的 custom.*(此前导入可能是别的扩展名)
+    // 每次导入使用新地址,让设置页图片与桌面纹理同时失效旧缓存。
+    let revision = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let dest = dir.join(format!("custom.{revision}.{ext}"));
+    // 先复制成功再清理旧图,也允许重新选择当前正在使用的图片。
+    std::fs::copy(src, &dest).map_err(|e| e.to_string())?;
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
-            if entry.file_name().to_string_lossy().starts_with("custom.") {
+            if entry.path() != dest && entry.file_name().to_string_lossy().starts_with("custom.") {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
     }
-    let dest = dir.join(format!("custom.{ext}"));
-    std::fs::copy(src, &dest).map_err(|e| e.to_string())?;
     Ok(dest.to_string_lossy().into_owned())
 }
 
