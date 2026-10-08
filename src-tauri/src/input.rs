@@ -30,6 +30,8 @@ const LLKHF_EXTENDED: u32 = 0x0000_0001;
 /// 长按保活间隔:周期性重发按下事件,让前端刷新时间戳,
 /// 避免长时间按住(如录屏时按住 Shift)被卡键清理误释放
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+/// 释放补偿独立于长按保活,避免锁屏后键帽再卡住十秒。
+const RECONCILE_INTERVAL: Duration = Duration::from_millis(250);
 
 static EVENT_TX: OnceLock<SyncSender<RawInput>> = OnceLock::new();
 
@@ -74,7 +76,7 @@ pub enum MouseButton {
 }
 
 /// 工作线程维护的物理按住键:保留原始虚拟键码,
-/// 供保活周期用 GetAsyncKeyState 对账硬件状态、补发丢失的释放
+/// 供独立对账周期用 GetAsyncKeyState 核对物理状态、补发丢失的释放
 #[derive(Clone)]
 struct PressedKey {
     vk: u32,
@@ -214,6 +216,7 @@ fn start_worker_thread(app: AppHandle, rx: Receiver<RawInput>, toggle_item: Menu
         // 物理按下键列表(用于显隐快捷键匹配与保活对账)
         let mut pressed_keys: Vec<PressedKey> = Vec::new();
         let mut last_keepalive = Instant::now();
+        let mut last_reconcile = Instant::now();
 
         loop {
             let raw = match rx.recv_timeout(WORKER_RECV_TIMEOUT) {
@@ -241,9 +244,12 @@ fn start_worker_thread(app: AppHandle, rx: Receiver<RawInput>, toggle_item: Menu
                 }
             }
 
-            // 长按保活:重发按下事件只用于刷新前端时间戳(前端对重复按下仅更新时间)。
-            // 重发前先对账硬件状态:释放事件丢失的卡键在这里补发释放并移除,
-            // 否则会被保活永远重发、前端卡键清理因时间戳持续刷新而永远不触发。
+            // 高频对账补发丢失的释放;长按保活仍每十秒刷新前端时间戳。
+            // 两者分别计时,避免补偿释放必须等到下一次保活。
+            if last_reconcile.elapsed() >= RECONCILE_INTERVAL {
+                last_reconcile = Instant::now();
+                reconcile_stuck_keys(&app, &mut pressed_keys);
+            }
             if last_keepalive.elapsed() >= KEEPALIVE_INTERVAL {
                 last_keepalive = Instant::now();
                 reconcile_stuck_keys(&app, &mut pressed_keys);
@@ -350,7 +356,7 @@ fn shortcut_matches(shortcut: &[String], pressed: &[String]) -> bool {
 /// 期间钩子收不到事件。卡键若留在 pressed_keys 中会被保活永远重发——前端卡键清理
 /// 因时间戳每 10s 被保活刷新而永远不触发,表现为无输入时键帽常驻;卡键还会污染
 /// 显隐快捷键的集合匹配(要求精确等长),导致 Shift+F10 失灵。以硬件状态为准对账,
-/// 每 10s 一次,最坏 10s 内自愈。
+/// 每 250ms 一次,补发释放后前端按配置的停留时长清理键帽。
 ///
 /// 注意:Return 与 KpReturn 共享 VK_RETURN、左右 Shift 在钩子里同为 VK_SHIFT,
 /// 共享 vk 时任一键仍物理按住则都保留——只可能延迟清理,不会误清真实按住。
@@ -358,19 +364,60 @@ fn shortcut_matches(shortcut: &[String], pressed: &[String]) -> bool {
 fn reconcile_stuck_keys(app: &AppHandle, pressed_keys: &mut Vec<PressedKey>) {
     use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
 
-    let mut i = 0;
-    while i < pressed_keys.len() {
-        let physically_down =
-            (unsafe { GetAsyncKeyState(pressed_keys[i].vk as i32) } as u16 & 0x8000) != 0;
-        if physically_down {
-            i += 1;
-            continue;
-        }
-        let stuck = pressed_keys.remove(i);
+    for stuck in take_released_keys(pressed_keys, |vk| {
+        (unsafe { GetAsyncKeyState(vk as i32) } as u16 & 0x8000) != 0
+    }) {
         emit_input_event(
             app,
             InputEvent::KeyEvent { pressed: false, name: stuck.name },
         );
+    }
+}
+
+/// 可独立验证的状态对账:只移除系统确认已松开的键,不按时长猜测长按。
+fn take_released_keys(
+    pressed_keys: &mut Vec<PressedKey>,
+    mut physically_down: impl FnMut(u32) -> bool,
+) -> Vec<PressedKey> {
+    let mut released = Vec::new();
+    pressed_keys.retain(|key| {
+        if physically_down(key.vk) {
+            true
+        } else {
+            released.push(key.clone());
+            false
+        }
+    });
+    released
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_lock_screen_releases_are_removed_and_not_kept_alive() {
+        let mut held: Vec<PressedKey> = [(0x5B, "MetaLeft"), (0x4C, "KeyL"), (0x0D, "Return")]
+            .into_iter().map(|(vk, name)| PressedKey { vk, name: name.into() }).collect();
+        let released = take_released_keys(&mut held, |_| false);
+        assert_eq!(released.iter().map(|k| k.name.as_str()).collect::<Vec<_>>(),
+            ["MetaLeft", "KeyL", "Return"]);
+        assert!(held.is_empty());
+        assert!(take_released_keys(&mut held, |_| false).is_empty());
+    }
+
+    #[test]
+    fn reconciliation_preserves_real_holds_and_removes_only_released_keys() {
+        let mut held = vec![
+            PressedKey { vk: 0x5B, name: "MetaLeft".into() },
+            PressedKey { vk: 0x4C, name: "KeyL".into() },
+        ];
+        for _ in 0..160 {
+            let released = take_released_keys(&mut held, |vk| vk == 0x5B);
+            assert!(released.iter().all(|key| key.name == "KeyL"));
+            assert_eq!(held.len(), 1);
+            assert_eq!(held[0].name, "MetaLeft");
+        }
     }
 }
 
